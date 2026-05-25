@@ -1,0 +1,35 @@
+Retrieval-Augmented Generation, or RAG, is a pattern for helping an AI answer
+questions using information from documents that were not part of its original
+training data. Instead of asking the model to guess, the application first
+retrieves useful passages from a trusted document and then gives those passages
+to the model as context.
+
+The first step in the pipeline is text extraction. A PDF, text file, Markdown
+file, or other document format must be converted into plain text. Once the
+program has plain text, it can start doing useful AI engineering work. That is
+why Day 1 focused only on opening a file and reading its contents.
+
+The second step is chunking. A document can be much larger than the amount of
+text we want to search or send to an AI model at one time. If we store a whole
+book as one giant text block, search results will be vague. If we split the book
+into paragraphs or sections, the search system can return the exact part that
+matches a question.
+
+Chunks should usually overlap a little. Imagine one important answer starts at
+the end of one chunk and finishes at the beginning of the next chunk. Without
+overlap, neither chunk has the full idea. With overlap, the repeated text gives
+the retrieval system a better chance of finding complete meaning.
+
+In this beginner project, we use character-based chunking because it is easy to
+see and debug. Later, real production systems often use token-based chunking
+because AI models count tokens instead of characters. The core idea is the same:
+turn one large document into smaller pieces that still preserve enough context.
+
+After chunking, the next stage will be embeddings. Each chunk will be converted
+into a vector, which is a list of numbers that represents meaning. Similar ideas
+will have similar vectors. This is what lets a RAG system search by meaning
+instead of only searching exact words.
+
+By the end of Day 2, the project has a clean two-step flow. First it extracts
+raw text from a file. Then it splits that text into chunks. This small flow is
+already the beginning of the real RAG pipeline.

@@ -1,0 +1,7 @@
+AI Document Chat is a small Retrieval-Augmented Generation project.
+
+On Day 1, we only care about one skill: opening a local file and turning it
+into plain text that Python can work with.
+
+Later, this same text will be split into chunks, converted into embeddings,
+stored in a vector database, and used as context for an AI answer.
