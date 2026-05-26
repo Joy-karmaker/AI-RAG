@@ -53,3 +53,30 @@ Why chunks matter:
 - LLMs and embedding models work better with smaller text pieces.
 - Search needs focused passages, not one giant document.
 - Overlap keeps important sentences from getting lost between chunk boundaries.
+
+## Day 3: Embeddings
+
+Goal: turn each chunk into a vector, which is a list of numbers.
+
+Run local embeddings without an API key:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --embed
+```
+
+Use a smaller local vector to make the output easier to inspect:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --embed --embedding-dimensions 16
+```
+
+Use Gemini embeddings after installing dependencies and setting an API key:
+
+```powershell
+python -m pip install -r requirements.txt
+$env:GEMINI_API_KEY="your-api-key"
+python -B backend/main.py sample_docs/day2_long.txt --embed --embedding-provider gemini
+```
+
+The local embedding provider is for learning and offline testing. The Gemini
+provider is the real embedding path for production-style RAG work.

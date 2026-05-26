@@ -5,12 +5,19 @@ import sys
 from pathlib import Path
 
 from rag.chunking import chunk_text
+from rag.embeddings import (
+    DEFAULT_GEMINI_MODEL,
+    DEFAULT_LOCAL_DIMENSIONS,
+    cosine_similarity,
+    embed_texts,
+    format_vector_preview,
+)
 from rag.extractor import extract_file_text
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Day 2: extract text from a document and split it into chunks."
+        description="Day 3: extract text, split it into chunks, and optionally embed chunks."
     )
     parser.add_argument(
         "file_path",
@@ -34,6 +41,28 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the full extracted document text before chunking.",
     )
+    parser.add_argument(
+        "--embed",
+        action="store_true",
+        help="Create embeddings for each text chunk.",
+    )
+    parser.add_argument(
+        "--embedding-provider",
+        choices=("local", "gemini"),
+        default="local",
+        help="Embedding provider to use with --embed. Default: local.",
+    )
+    parser.add_argument(
+        "--embedding-dimensions",
+        type=int,
+        default=DEFAULT_LOCAL_DIMENSIONS,
+        help=f"Dimensions for local embeddings. Default: {DEFAULT_LOCAL_DIMENSIONS}.",
+    )
+    parser.add_argument(
+        "--gemini-model",
+        default=DEFAULT_GEMINI_MODEL,
+        help=f"Gemini embedding model to use. Default: {DEFAULT_GEMINI_MODEL}.",
+    )
     return parser
 
 
@@ -44,6 +73,15 @@ def main() -> None:
     try:
         text = extract_file_text(args.file_path)
         chunks = chunk_text(text, chunk_size=args.chunk_size, overlap=args.overlap)
+        embeddings = []
+
+        if args.embed:
+            embeddings = embed_texts(
+                [chunk.text for chunk in chunks],
+                provider=args.embedding_provider,
+                dimensions=args.embedding_dimensions,
+                gemini_model=args.gemini_model,
+            )
     except (FileNotFoundError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -58,11 +96,30 @@ def main() -> None:
         print(f"\n--- Chunk {chunk.index} ({chunk.start}-{chunk.end}) ---")
         print(chunk.text)
 
+    if args.embed:
+        print("\n=== Embeddings ===")
+
+        for embedding in embeddings:
+            print(f"\n--- Chunk {embedding.index} Vector ---")
+            print(f"Provider: {embedding.provider}")
+            print(f"Model: {embedding.model}")
+            print(f"Dimensions: {embedding.dimensions}")
+            print(f"Magnitude: {embedding.magnitude:.4f}")
+            print(f"Preview: {format_vector_preview(embedding.values)}")
+
+        if len(embeddings) >= 2:
+            similarity = cosine_similarity(embeddings[0].values, embeddings[1].values)
+            print("\n=== Similarity Check ===")
+            print(f"Chunk 1 vs Chunk 2 cosine similarity: {similarity:.4f}")
+
     print("\n=== Summary ===")
     print(f"Characters extracted: {len(text)}")
     print(f"Chunks created: {len(chunks)}")
     print(f"Chunk size: {args.chunk_size}")
     print(f"Overlap: {args.overlap}")
+
+    if args.embed:
+        print(f"Embeddings created: {len(embeddings)}")
 
 
 if __name__ == "__main__":
