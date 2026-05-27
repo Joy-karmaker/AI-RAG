@@ -13,11 +13,12 @@ from rag.embeddings import (
     format_vector_preview,
 )
 from rag.extractor import extract_file_text
+from rag.vector_store import DEFAULT_COLLECTION_NAME, InMemoryVectorStore
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Day 3: extract text, split it into chunks, and optionally embed chunks."
+        description="Day 4: extract, chunk, embed, and optionally store vectors in Qdrant."
     )
     parser.add_argument(
         "file_path",
@@ -63,6 +64,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_GEMINI_MODEL,
         help=f"Gemini embedding model to use. Default: {DEFAULT_GEMINI_MODEL}.",
     )
+    parser.add_argument(
+        "--store-vectors",
+        action="store_true",
+        help="Store chunk embeddings in an in-memory Qdrant collection.",
+    )
+    parser.add_argument(
+        "--collection-name",
+        default=DEFAULT_COLLECTION_NAME,
+        help=f"Qdrant collection name. Default: {DEFAULT_COLLECTION_NAME}.",
+    )
+    parser.add_argument(
+        "--document-id",
+        default=None,
+        help="Document id saved in each vector payload. Default: file name.",
+    )
     return parser
 
 
@@ -74,14 +90,27 @@ def main() -> None:
         text = extract_file_text(args.file_path)
         chunks = chunk_text(text, chunk_size=args.chunk_size, overlap=args.overlap)
         embeddings = []
+        stored_count = 0
+        stored_previews = []
 
-        if args.embed:
+        should_create_embeddings = args.embed or args.store_vectors
+        if should_create_embeddings:
             embeddings = embed_texts(
                 [chunk.text for chunk in chunks],
                 provider=args.embedding_provider,
                 dimensions=args.embedding_dimensions,
                 gemini_model=args.gemini_model,
             )
+
+        if args.store_vectors:
+            document_id = args.document_id or args.file_path.name
+            vector_store = InMemoryVectorStore(collection_name=args.collection_name)
+            stored_count = vector_store.store_chunks(
+                chunks=chunks,
+                embeddings=embeddings,
+                document_id=document_id,
+            )
+            stored_previews = vector_store.preview_points()
     except (FileNotFoundError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -96,7 +125,7 @@ def main() -> None:
         print(f"\n--- Chunk {chunk.index} ({chunk.start}-{chunk.end}) ---")
         print(chunk.text)
 
-    if args.embed:
+    if args.embed or args.store_vectors:
         print("\n=== Embeddings ===")
 
         for embedding in embeddings:
@@ -112,14 +141,30 @@ def main() -> None:
             print("\n=== Similarity Check ===")
             print(f"Chunk 1 vs Chunk 2 cosine similarity: {similarity:.4f}")
 
+    if args.store_vectors:
+        print("\n=== Vector Store ===")
+        print("Storage: Qdrant in-memory")
+        print(f"Collection: {args.collection_name}")
+        print(f"Points stored: {stored_count}")
+
+        if stored_previews:
+            print("\nStored point preview:")
+            for preview in stored_previews:
+                print(
+                    f"- Point {preview.id}: chunk {preview.chunk_index}, "
+                    f"{preview.text_preview}"
+                )
+
     print("\n=== Summary ===")
     print(f"Characters extracted: {len(text)}")
     print(f"Chunks created: {len(chunks)}")
     print(f"Chunk size: {args.chunk_size}")
     print(f"Overlap: {args.overlap}")
 
-    if args.embed:
+    if args.embed or args.store_vectors:
         print(f"Embeddings created: {len(embeddings)}")
+    if args.store_vectors:
+        print(f"Vectors stored: {stored_count}")
 
 
 if __name__ == "__main__":

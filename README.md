@@ -80,3 +80,32 @@ python -B backend/main.py sample_docs/day2_long.txt --embed --embedding-provider
 
 The local embedding provider is for learning and offline testing. The Gemini
 provider is the real embedding path for production-style RAG work.
+
+## Day 4: Vector Storage
+
+Goal: store chunk vectors in a local in-memory Qdrant collection.
+
+Install the vector database client:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Store local embeddings in Qdrant:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --store-vectors --embedding-dimensions 16
+```
+
+What gets stored:
+
+- vector values
+- document id
+- chunk index
+- chunk start and end positions
+- original chunk text
+- embedding provider and model name
+
+For now, Qdrant runs in memory. That means the collection exists only while the
+program is running. This is perfect for learning Day 4 without Docker, services,
+or a separate database process.
