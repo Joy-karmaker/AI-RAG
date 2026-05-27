@@ -109,3 +109,31 @@ What gets stored:
 For now, Qdrant runs in memory. That means the collection exists only while the
 program is running. This is perfect for learning Day 4 without Docker, services,
 or a separate database process.
+
+## Day 5: Semantic Search
+
+Goal: ask a question and retrieve the most relevant stored chunks.
+
+Run a search:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --query "What is chunking?" --top-k 3
+```
+
+Another example:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --query "Why do chunks overlap?" --top-k 2
+```
+
+Day 5 process:
+
+1. Extract document text.
+2. Split the document into chunks.
+3. Embed each chunk.
+4. Store chunk vectors in Qdrant.
+5. Embed the user query.
+6. Search Qdrant for the closest chunk vectors.
+7. Print the highest-scoring chunks.
+
+This is the retrieval part of Retrieval-Augmented Generation.

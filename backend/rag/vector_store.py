@@ -16,8 +16,20 @@ class StoredPointPreview:
     text_preview: str
 
 
+@dataclass(frozen=True)
+class SearchResult:
+    id: int | str
+    score: float
+    document_id: str
+    chunk_index: int
+    start: int
+    end: int
+    text: str
+    text_preview: str
+
+
 class InMemoryVectorStore:
-    """Small Qdrant wrapper for Day 4 vector storage."""
+    """Small Qdrant wrapper for vector storage and search."""
 
     def __init__(self, collection_name: str = DEFAULT_COLLECTION_NAME) -> None:
         self.collection_name = collection_name
@@ -98,6 +110,38 @@ class InMemoryVectorStore:
             )
 
         return previews
+
+    def search(self, query_vector: list[float], limit: int = 3) -> list[SearchResult]:
+        """Find stored chunks whose vectors are closest to the query vector."""
+        if limit <= 0:
+            raise ValueError("search limit must be greater than 0.")
+
+        response = self._client.query_points(
+            collection_name=self.collection_name,
+            query=query_vector,
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        results = []
+        for point in response.points:
+            payload = point.payload or {}
+            text = str(payload.get("text", ""))
+            results.append(
+                SearchResult(
+                    id=point.id,
+                    score=point.score,
+                    document_id=str(payload.get("document_id", "")),
+                    chunk_index=int(payload.get("chunk_index", 0)),
+                    start=int(payload.get("start", 0)),
+                    end=int(payload.get("end", 0)),
+                    text=text,
+                    text_preview=_preview_text(text),
+                )
+            )
+
+        return results
 
     def _create_collection(self, vector_size: int) -> None:
         if self._client.collection_exists(self.collection_name):

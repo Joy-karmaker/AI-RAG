@@ -11,6 +11,36 @@ from typing import Iterable
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]+")
 DEFAULT_LOCAL_DIMENSIONS = 64
 DEFAULT_GEMINI_MODEL = "gemini-embedding-2"
+STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "do",
+    "does",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "what",
+    "when",
+    "where",
+    "why",
+    "with",
+}
 
 
 @dataclass(frozen=True)
@@ -93,7 +123,7 @@ def _embed_with_local_hashing(texts: list[str], dimensions: int) -> list[Embeddi
 
 def _local_hash_embedding(text: str, dimensions: int) -> list[float]:
     vector = [0.0] * dimensions
-    tokens = TOKEN_PATTERN.findall(text.lower())
+    tokens = _tokenize_for_local_embedding(text)
 
     for token in tokens:
         digest = hashlib.sha256(token.encode("utf-8")).digest()
@@ -102,6 +132,37 @@ def _local_hash_embedding(text: str, dimensions: int) -> list[float]:
         vector[bucket] += weight
 
     return _normalize(vector)
+
+
+def _tokenize_for_local_embedding(text: str) -> list[str]:
+    tokens = []
+
+    for raw_token in TOKEN_PATTERN.findall(text.lower()):
+        token = _normalize_token(raw_token)
+
+        if token:
+            tokens.append(token)
+
+    return tokens
+
+
+def _normalize_token(token: str) -> str | None:
+    if len(token) < 2 or token in STOP_WORDS:
+        return None
+
+    if len(token) > 5 and token.endswith("ing"):
+        token = token[:-3]
+    elif len(token) > 4 and token.endswith("ies"):
+        token = f"{token[:-3]}y"
+    elif len(token) > 4 and token.endswith("es"):
+        token = token[:-2]
+    elif len(token) > 3 and token.endswith("s"):
+        token = token[:-1]
+
+    if token in STOP_WORDS:
+        return None
+
+    return token
 
 
 def _normalize(values: list[float]) -> list[float]:
