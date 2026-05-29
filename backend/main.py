@@ -13,12 +13,14 @@ from rag.embeddings import (
     format_vector_preview,
 )
 from rag.extractor import extract_file_text
+from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
+from rag.prompt import build_grounded_prompt
 from rag.vector_store import DEFAULT_COLLECTION_NAME, InMemoryVectorStore
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Day 5: extract, chunk, embed, store vectors, and search relevant chunks."
+        description="Day 6: retrieve relevant chunks and ask Gemini for a grounded answer."
     )
     parser.add_argument(
         "file_path",
@@ -90,6 +92,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Number of search results to return. Default: 3.",
     )
+    parser.add_argument(
+        "--answer",
+        action="store_true",
+        help="Use Gemini to answer the query from retrieved chunks.",
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=DEFAULT_LLM_MODEL,
+        help=f"Gemini model for answer generation. Default: {DEFAULT_LLM_MODEL}.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.2,
+        help="Gemini answer temperature. Lower is more focused. Default: 0.2.",
+    )
+    parser.add_argument(
+        "--show-prompt",
+        action="store_true",
+        help="Print the grounded prompt sent to Gemini.",
+    )
+    parser.add_argument(
+        "--dry-run-answer",
+        action="store_true",
+        help="Build and print the grounded prompt without calling Gemini.",
+    )
     return parser
 
 
@@ -105,8 +133,19 @@ def main() -> None:
         stored_previews = []
         search_results = []
         query_embedding = None
+        grounded_answer = None
+        grounded_prompt = None
 
-        should_create_embeddings = args.embed or args.store_vectors or args.query
+        if (args.answer or args.dry_run_answer) and not args.query:
+            raise ValueError("--answer and --dry-run-answer require --query.")
+
+        should_create_embeddings = (
+            args.embed
+            or args.store_vectors
+            or args.query
+            or args.answer
+            or args.dry_run_answer
+        )
         if should_create_embeddings:
             embeddings = embed_texts(
                 [chunk.text for chunk in chunks],
@@ -115,7 +154,9 @@ def main() -> None:
                 gemini_model=args.gemini_model,
             )
 
-        should_use_vector_store = args.store_vectors or args.query
+        should_use_vector_store = (
+            args.store_vectors or args.query or args.answer or args.dry_run_answer
+        )
         if should_use_vector_store:
             document_id = args.document_id or args.file_path.name
             vector_store = InMemoryVectorStore(collection_name=args.collection_name)
@@ -137,6 +178,16 @@ def main() -> None:
                     query_vector=query_embedding.values,
                     limit=args.top_k,
                 )
+
+                if args.dry_run_answer:
+                    grounded_prompt = build_grounded_prompt(args.query, search_results)
+                elif args.answer:
+                    grounded_answer = generate_grounded_answer(
+                        question=args.query,
+                        search_results=search_results,
+                        model=args.llm_model,
+                        temperature=args.temperature,
+                    )
     except (FileNotFoundError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -151,7 +202,7 @@ def main() -> None:
         print(f"\n--- Chunk {chunk.index} ({chunk.start}-{chunk.end}) ---")
         print(chunk.text)
 
-    if args.embed or args.store_vectors or args.query:
+    if args.embed or args.store_vectors or args.query or args.answer or args.dry_run_answer:
         print("\n=== Embeddings ===")
 
         for embedding in embeddings:
@@ -167,7 +218,7 @@ def main() -> None:
             print("\n=== Similarity Check ===")
             print(f"Chunk 1 vs Chunk 2 cosine similarity: {similarity:.4f}")
 
-    if args.store_vectors or args.query:
+    if args.store_vectors or args.query or args.answer or args.dry_run_answer:
         print("\n=== Vector Store ===")
         print("Storage: Qdrant in-memory")
         print(f"Collection: {args.collection_name}")
@@ -199,18 +250,36 @@ def main() -> None:
         else:
             print("No matching chunks found.")
 
+    if args.dry_run_answer and grounded_prompt:
+        print("\n=== Grounded Prompt ===")
+        print(grounded_prompt)
+        print("\nGemini call skipped because --dry-run-answer was used.")
+
+    if args.answer and grounded_answer:
+        if args.show_prompt:
+            print("\n=== Grounded Prompt ===")
+            print(grounded_answer.prompt)
+
+        print("\n=== Gemini Answer ===")
+        print(f"Model: {grounded_answer.model}")
+        print(f"Context chunks used: {grounded_answer.context_count}")
+        print()
+        print(grounded_answer.answer)
+
     print("\n=== Summary ===")
     print(f"Characters extracted: {len(text)}")
     print(f"Chunks created: {len(chunks)}")
     print(f"Chunk size: {args.chunk_size}")
     print(f"Overlap: {args.overlap}")
 
-    if args.embed or args.store_vectors or args.query:
+    if args.embed or args.store_vectors or args.query or args.answer or args.dry_run_answer:
         print(f"Embeddings created: {len(embeddings)}")
-    if args.store_vectors or args.query:
+    if args.store_vectors or args.query or args.answer or args.dry_run_answer:
         print(f"Vectors stored: {stored_count}")
     if args.query:
         print(f"Search results: {len(search_results)}")
+    if args.answer and grounded_answer:
+        print("Gemini answer generated: yes")
 
 
 if __name__ == "__main__":

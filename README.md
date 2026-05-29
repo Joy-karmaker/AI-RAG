@@ -137,3 +137,51 @@ Day 5 process:
 7. Print the highest-scoring chunks.
 
 This is the retrieval part of Retrieval-Augmented Generation.
+
+## Day 6: Grounded Gemini Answers
+
+Goal: send the retrieved chunks to Gemini and ask it to answer using only that
+document context.
+
+Create a `.env` file in the project root with one of these key names:
+
+```text
+GEMINI_API_KEY=your-api-key
+```
+
+This project also accepts `GOOGLE_API_KEY` or `API_KEY`.
+
+Generate a grounded answer:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --query "Why do chunks overlap?" --top-k 3 --answer
+```
+
+Show the exact prompt sent to Gemini:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --query "Why do chunks overlap?" --top-k 3 --answer --show-prompt
+```
+
+Build the prompt without calling Gemini:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --query "Why do chunks overlap?" --top-k 3 --dry-run-answer
+```
+
+Day 6 process:
+
+1. Extract document text.
+2. Split text into chunks.
+3. Create embeddings for chunks.
+4. Store vectors in Qdrant.
+5. Embed the user question.
+6. Retrieve the top matching chunks.
+7. Build a grounded prompt from those chunks.
+8. Ask Gemini to answer using only that context.
+
+This is where the project becomes a real RAG loop:
+
+```text
+retrieve context -> augment prompt -> generate answer
+```

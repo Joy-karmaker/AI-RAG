@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import re
 from dataclasses import dataclass
 from typing import Iterable
+
+from rag.config import get_gemini_api_key, load_env_file
 
 
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]+")
@@ -175,9 +176,13 @@ def _normalize(values: list[float]) -> list[float]:
 
 
 def _embed_with_gemini(texts: list[str], model: str) -> list[EmbeddingResult]:
-    if not os.environ.get("GEMINI_API_KEY") and not os.environ.get("GOOGLE_API_KEY"):
+    load_env_file()
+    api_key = get_gemini_api_key()
+
+    if not api_key:
         raise RuntimeError(
-            "Gemini embeddings require an API key. Set GEMINI_API_KEY first."
+            "Gemini embeddings require an API key in GEMINI_API_KEY, "
+            "GOOGLE_API_KEY, or API_KEY."
         )
 
     try:
@@ -189,7 +194,7 @@ def _embed_with_gemini(texts: list[str], model: str) -> list[EmbeddingResult]:
             "python -m pip install -r requirements.txt"
         ) from exc
 
-    client = genai.Client()
+    client = genai.Client(api_key=api_key)
     results: list[EmbeddingResult] = []
 
     for index, text in enumerate(texts, start=1):
