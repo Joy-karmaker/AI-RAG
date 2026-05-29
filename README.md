@@ -185,3 +185,42 @@ This is where the project becomes a real RAG loop:
 ```text
 retrieve context -> augment prompt -> generate answer
 ```
+
+## Day 7: FastAPI Backend
+
+Goal: expose the project logic through HTTP API routes.
+
+Run the backend server:
+
+```powershell
+python -B -m uvicorn api:app --app-dir backend --host 127.0.0.1 --port 8000
+```
+
+Open the interactive API docs:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Core routes:
+
+- `GET /health` checks that the API is running.
+- `POST /chunks` chunks raw text from JSON.
+- `POST /documents/extract` extracts text from an uploaded `.txt`, `.md`, or `.pdf`.
+- `POST /rag/search` searches a provided text document with a question.
+- `POST /rag/prompt` builds the grounded prompt that would be sent to Gemini.
+
+Example health check:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+Example chunk request:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/chunks `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"text":"RAG splits documents into searchable chunks.","chunk_size":30,"overlap":5}'
+```
