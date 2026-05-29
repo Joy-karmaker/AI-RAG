@@ -21,5 +21,6 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+uvicorn-*.log
 .DS_Store
 Thumbs.db

@@ -291,3 +291,34 @@ Day 8 process:
 
 The uploaded document data is still in memory only. Restarting the backend clears
 processed documents, which keeps this learning version simple.
+
+## Day 9: Frontend UI
+
+Goal: use the RAG backend from a browser.
+
+Start the backend:
+
+```powershell
+python -B -m uvicorn api:app --app-dir backend --host 127.0.0.1 --port 8000
+```
+
+Start the frontend:
+
+```powershell
+python -B -m http.server 5173 --directory frontend
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+Day 9 flow:
+
+1. Upload a `.txt`, `.md`, or `.pdf` file.
+2. The frontend calls `POST /documents/upload`.
+3. The backend returns a `document_id`.
+4. Ask a question in the browser.
+5. The frontend calls `POST /documents/{document_id}/query`.
+6. The UI renders the answer and source chunks.

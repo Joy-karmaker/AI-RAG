@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI-RAG</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="side-panel">
+        <header class="brand-bar">
+          <div>
+            <p class="eyebrow">AI-RAG</p>
+            <h1>Document Chat</h1>
+          </div>
+          <span id="apiStatus" class="status-pill">API</span>
+        </header>
+
+        <section class="tool-section">
+          <div class="section-header">
+            <h2>Upload</h2>
+            <span id="fileName" class="muted">No file</span>
+          </div>
+
+          <label id="dropZone" class="drop-zone" for="fileInput">
+            <input id="fileInput" type="file" accept=".txt,.md,.pdf" />
+            <span class="drop-mark">+</span>
+            <span class="drop-title">Select document</span>
+          </label>
+
+          <div class="control-grid">
+            <label>
+              <span>Chunk</span>
+              <input id="chunkSize" type="number" min="100" step="50" value="600" />
+            </label>
+            <label>
+              <span>Overlap</span>
+              <input id="overlap" type="number" min="0" step="10" value="120" />
+            </label>
+          </div>
+
+          <button id="uploadButton" class="primary-button" type="button">
+            Upload
+          </button>
+        </section>
+
+        <section class="tool-section document-section">
+          <div class="section-header">
+            <h2>Documents</h2>
+            <button id="refreshButton" class="icon-button" type="button" title="Refresh">
+              Refresh
+            </button>
+          </div>
+          <div id="documentList" class="document-list"></div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <section class="query-panel">
+          <div class="selected-strip">
+            <div>
+              <p class="eyebrow">Selected</p>
+              <h2 id="selectedTitle">No document selected</h2>
+            </div>
+            <div id="selectedMeta" class="meta-row"></div>
+          </div>
+
+          <label class="question-box">
+            <span>Question</span>
+            <textarea
+              id="questionInput"
+              rows="4"
+              placeholder="Ask about the selected document"
+            ></textarea>
+          </label>
+
+          <div class="query-actions">
+            <label class="compact-field">
+              <span>Top K</span>
+              <input id="topK" type="number" min="1" max="8" value="3" />
+            </label>
+
+            <label class="switch-field">
+              <input id="answerToggle" type="checkbox" checked />
+              <span></span>
+              <b>Gemini</b>
+            </label>
+
+            <button id="askButton" class="primary-button" type="button">
+              Ask
+            </button>
+            <button id="promptButton" class="secondary-button" type="button">
+              Prompt
+            </button>
+          </div>
+        </section>
+
+        <section class="result-grid">
+          <article class="answer-panel">
+            <div class="section-header">
+              <h2>Answer</h2>
+              <span id="answerModel" class="muted"></span>
+            </div>
+            <div id="answerBox" class="answer-box empty-state">
+              Upload a document to begin.
+            </div>
+          </article>
+
+          <article class="sources-panel">
+            <div class="section-header">
+              <h2>Sources</h2>
+              <span id="sourceCount" class="muted"></span>
+            </div>
+            <div id="sourcesList" class="sources-list"></div>
+          </article>
+        </section>
+
+        <section id="promptPanel" class="prompt-panel hidden">
+          <div class="section-header">
+            <h2>Prompt</h2>
+            <button id="clearPromptButton" class="icon-button" type="button" title="Close">
+              Close
+            </button>
+          </div>
+          <pre id="promptBox"></pre>
+        </section>
+
+        <div id="messageBar" class="message-bar" role="status"></div>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
