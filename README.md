@@ -224,3 +224,70 @@ Invoke-RestMethod http://127.0.0.1:8000/chunks `
   -ContentType "application/json" `
   -Body '{"text":"RAG splits documents into searchable chunks.","chunk_size":30,"overlap":5}'
 ```
+
+## Day 8: Connected Backend Pipeline
+
+Goal: upload a document once, store its vectors in memory, then ask questions
+against that uploaded document by `document_id`.
+
+Upload and process a document:
+
+```powershell
+$upload = curl.exe -s -X POST `
+  -F "file=@sample_docs/day2_long.txt" `
+  -F "chunk_size=600" `
+  -F "overlap=120" `
+  http://127.0.0.1:8000/documents/upload | ConvertFrom-Json
+
+$upload.document_id
+```
+
+Ask a question about that uploaded document:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/documents/$($upload.document_id)/query" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"query":"Why do chunks overlap?","top_k":2}'
+```
+
+Build the Gemini prompt without calling Gemini:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/documents/$($upload.document_id)/query" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"query":"Why do chunks overlap?","top_k":2,"dry_run_answer":true}'
+```
+
+Ask Gemini for a grounded answer:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/documents/$($upload.document_id)/query" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"query":"Why do chunks overlap?","top_k":1,"answer":true}'
+```
+
+List uploaded documents:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/documents
+```
+
+Day 8 process:
+
+1. `POST /documents/upload` extracts text from the uploaded file.
+2. The API chunks that text.
+3. The API embeds each chunk.
+4. The API stores chunk vectors in the shared in-memory Qdrant store.
+5. The API returns a `document_id`.
+6. `POST /documents/{document_id}/query` embeds the question.
+7. Qdrant searches only that document's chunks.
+8. The API returns matching chunks, a grounded prompt, or a Gemini answer.
+
+The uploaded document data is still in memory only. Restarting the backend clears
+processed documents, which keeps this learning version simple.

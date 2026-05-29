@@ -1,24 +1,27 @@
 from __future__ import annotations
 
 import tempfile
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from rag.chunking import chunk_text
 from rag.embeddings import DEFAULT_LOCAL_DIMENSIONS, embed_texts
 from rag.extractor import extract_file_text
+from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
 from rag.prompt import build_grounded_prompt
 from rag.vector_store import DEFAULT_COLLECTION_NAME, InMemoryVectorStore
 
 
 app = FastAPI(
     title="AI-RAG API",
-    version="0.7.0",
-    description="Day 7 FastAPI backend for the AI-RAG learning project.",
+    version="0.8.0",
+    description="Day 8 connected backend for the AI-RAG learning project.",
 )
 
 app.add_middleware(
@@ -33,6 +36,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+vector_store = InMemoryVectorStore(collection_name=DEFAULT_COLLECTION_NAME)
+documents: dict[str, "DocumentRecord"] = {}
+
+
+@dataclass(frozen=True)
+class DocumentRecord:
+    document_id: str
+    filename: str
+    characters: int
+    chunk_count: int
+    vector_count: int
+    embedding_dimensions: int
 
 
 class ChunkRequest(BaseModel):
@@ -92,6 +108,38 @@ class PromptResponse(SearchResponse):
     prompt: str
 
 
+class DocumentUploadResponse(BaseModel):
+    document_id: str
+    filename: str
+    characters: int
+    chunk_count: int
+    vector_count: int
+    embedding_dimensions: int
+
+
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentUploadResponse]
+
+
+class DocumentQueryRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    top_k: int = Field(default=3, gt=0)
+    answer: bool = False
+    dry_run_answer: bool = False
+    llm_model: str = DEFAULT_LLM_MODEL
+    temperature: float = 0.2
+
+
+class DocumentQueryResponse(BaseModel):
+    document_id: str
+    filename: str
+    query: str
+    results: list[SearchResultPayload]
+    answer: Optional[str] = None
+    answer_model: Optional[str] = None
+    prompt: Optional[str] = None
+
+
 @app.get("/")
 def read_root() -> dict[str, object]:
     return {
@@ -103,8 +151,11 @@ def read_root() -> dict[str, object]:
 
 
 @app.get("/health")
-def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+def health_check() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "processed_documents": len(documents),
+    }
 
 
 @app.post("/chunks", response_model=ChunkResponse)
@@ -179,6 +230,130 @@ def build_rag_prompt(request: SearchRequest) -> PromptResponse:
     )
 
 
+@app.post("/documents/upload", response_model=DocumentUploadResponse)
+async def upload_document(
+    file: UploadFile = File(...),
+    chunk_size: int = Form(default=1000),
+    overlap: int = Form(default=200),
+    embedding_dimensions: int = Form(default=DEFAULT_LOCAL_DIMENSIONS),
+    document_id: Optional[str] = Form(default=None),
+) -> DocumentUploadResponse:
+    if chunk_size <= 0:
+        raise HTTPException(status_code=400, detail="chunk_size must be greater than 0.")
+
+    if overlap < 0:
+        raise HTTPException(status_code=400, detail="overlap cannot be negative.")
+
+    if embedding_dimensions <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="embedding_dimensions must be greater than 0.",
+        )
+
+    filename = Path(file.filename or "uploaded_document").name
+    content = await file.read()
+
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        text = _extract_upload_text(filename, content)
+        chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+        embeddings = embed_texts(
+            [chunk.text for chunk in chunks],
+            dimensions=embedding_dimensions,
+        )
+        resolved_document_id = document_id or _new_document_id(filename)
+        vector_count = vector_store.store_chunks(
+            chunks=chunks,
+            embeddings=embeddings,
+            document_id=resolved_document_id,
+        )
+    except (RuntimeError, UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    record = DocumentRecord(
+        document_id=resolved_document_id,
+        filename=filename,
+        characters=len(text),
+        chunk_count=len(chunks),
+        vector_count=vector_count,
+        embedding_dimensions=embedding_dimensions,
+    )
+    documents[resolved_document_id] = record
+
+    return _document_record_to_response(record)
+
+
+@app.get("/documents", response_model=DocumentListResponse)
+def list_documents() -> DocumentListResponse:
+    return DocumentListResponse(
+        documents=[
+            _document_record_to_response(record)
+            for record in documents.values()
+        ]
+    )
+
+
+@app.get("/documents/{document_id}", response_model=DocumentUploadResponse)
+def get_document(document_id: str) -> DocumentUploadResponse:
+    record = _get_document_record(document_id)
+    return _document_record_to_response(record)
+
+
+@app.post("/documents/{document_id}/query", response_model=DocumentQueryResponse)
+def query_uploaded_document(
+    document_id: str,
+    request: DocumentQueryRequest,
+) -> DocumentQueryResponse:
+    if request.answer and request.dry_run_answer:
+        raise HTTPException(
+            status_code=400,
+            detail="Use either answer or dry_run_answer, not both.",
+        )
+
+    record = _get_document_record(document_id)
+
+    try:
+        query_embedding = embed_texts(
+            [request.query],
+            dimensions=record.embedding_dimensions,
+        )[0]
+        search_results = vector_store.search(
+            query_vector=query_embedding.values,
+            limit=request.top_k,
+            document_id=document_id,
+        )
+
+        prompt = None
+        answer = None
+        answer_model = None
+
+        if request.dry_run_answer:
+            prompt = build_grounded_prompt(request.query, search_results)
+        elif request.answer:
+            grounded_answer = generate_grounded_answer(
+                question=request.query,
+                search_results=search_results,
+                model=request.llm_model,
+                temperature=request.temperature,
+            )
+            answer = grounded_answer.answer
+            answer_model = grounded_answer.model
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return DocumentQueryResponse(
+        document_id=record.document_id,
+        filename=record.filename,
+        query=request.query,
+        results=_search_results_to_payload(search_results),
+        answer=answer,
+        answer_model=answer_model,
+        prompt=prompt,
+    )
+
+
 def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
     chunks = chunk_text(
         request.text,
@@ -190,8 +365,8 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
         dimensions=request.embedding_dimensions,
     )
     document_id = request.document_id or "api-document"
-    vector_store = InMemoryVectorStore(collection_name=DEFAULT_COLLECTION_NAME)
-    vector_count = vector_store.store_chunks(
+    request_vector_store = InMemoryVectorStore(collection_name=DEFAULT_COLLECTION_NAME)
+    vector_count = request_vector_store.store_chunks(
         chunks=chunks,
         embeddings=embeddings,
         document_id=document_id,
@@ -200,7 +375,7 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
         [request.query],
         dimensions=request.embedding_dimensions,
     )[0]
-    search_results = vector_store.search(
+    search_results = request_vector_store.search(
         query_vector=query_embedding.values,
         limit=request.top_k,
     )
@@ -211,18 +386,54 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
             document_id=document_id,
             chunk_count=len(chunks),
             vector_count=vector_count,
-            results=[
-                SearchResultPayload(
-                    rank=rank,
-                    chunk_index=result.chunk_index,
-                    score=result.score,
-                    start=result.start,
-                    end=result.end,
-                    text=result.text,
-                    text_preview=result.text_preview,
-                )
-                for rank, result in enumerate(search_results, start=1)
-            ],
+            results=_search_results_to_payload(search_results),
         ),
         search_results,
     )
+
+
+def _extract_upload_text(filename: str, content: bytes) -> str:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        file_path = Path(temp_dir) / filename
+        file_path.write_bytes(content)
+        return extract_file_text(file_path)
+
+
+def _new_document_id(filename: str) -> str:
+    safe_stem = Path(filename).stem.lower().replace(" ", "-") or "document"
+    return f"{safe_stem}-{uuid.uuid4().hex[:8]}"
+
+
+def _get_document_record(document_id: str) -> DocumentRecord:
+    record = documents.get(document_id)
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    return record
+
+
+def _document_record_to_response(record: DocumentRecord) -> DocumentUploadResponse:
+    return DocumentUploadResponse(
+        document_id=record.document_id,
+        filename=record.filename,
+        characters=record.characters,
+        chunk_count=record.chunk_count,
+        vector_count=record.vector_count,
+        embedding_dimensions=record.embedding_dimensions,
+    )
+
+
+def _search_results_to_payload(search_results: list) -> list[SearchResultPayload]:
+    return [
+        SearchResultPayload(
+            rank=rank,
+            chunk_index=result.chunk_index,
+            score=result.score,
+            start=result.start,
+            end=result.end,
+            text=result.text,
+            text_preview=result.text_preview,
+        )
+        for rank, result in enumerate(search_results, start=1)
+    ]

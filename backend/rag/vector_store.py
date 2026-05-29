@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 
 from rag.chunking import TextChunk
@@ -36,7 +37,14 @@ class InMemoryVectorStore:
 
         try:
             from qdrant_client import QdrantClient
-            from qdrant_client.models import Distance, PointStruct, VectorParams
+            from qdrant_client.models import (
+                Distance,
+                FieldCondition,
+                Filter,
+                MatchValue,
+                PointStruct,
+                VectorParams,
+            )
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "Vector storage requires qdrant-client. Install it with: "
@@ -45,8 +53,12 @@ class InMemoryVectorStore:
 
         self._client = QdrantClient(":memory:")
         self._distance = Distance
+        self._field_condition = FieldCondition
+        self._filter = Filter
+        self._match_value = MatchValue
         self._point_struct = PointStruct
         self._vector_params = VectorParams
+        self._vector_size: int | None = None
 
     def store_chunks(
         self,
@@ -61,13 +73,13 @@ class InMemoryVectorStore:
             return 0
 
         vector_size = embeddings[0].dimensions
-        self._create_collection(vector_size)
+        self._ensure_collection(vector_size)
 
         points = []
         for chunk, embedding in zip(chunks, embeddings):
             points.append(
                 self._point_struct(
-                    id=chunk.index,
+                    id=_build_point_id(document_id, chunk.index),
                     vector=embedding.values,
                     payload={
                         "document_id": document_id,
@@ -88,11 +100,16 @@ class InMemoryVectorStore:
 
         return len(points)
 
-    def preview_points(self, limit: int = 3) -> list[StoredPointPreview]:
+    def preview_points(
+        self,
+        limit: int = 3,
+        document_id: str | None = None,
+    ) -> list[StoredPointPreview]:
         """Read a few stored points back from Qdrant so we can verify storage."""
         records, _ = self._client.scroll(
             collection_name=self.collection_name,
             limit=limit,
+            scroll_filter=self._document_filter(document_id),
             with_payload=True,
             with_vectors=False,
         )
@@ -111,7 +128,12 @@ class InMemoryVectorStore:
 
         return previews
 
-    def search(self, query_vector: list[float], limit: int = 3) -> list[SearchResult]:
+    def search(
+        self,
+        query_vector: list[float],
+        limit: int = 3,
+        document_id: str | None = None,
+    ) -> list[SearchResult]:
         """Find stored chunks whose vectors are closest to the query vector."""
         if limit <= 0:
             raise ValueError("search limit must be greater than 0.")
@@ -119,6 +141,7 @@ class InMemoryVectorStore:
         response = self._client.query_points(
             collection_name=self.collection_name,
             query=query_vector,
+            query_filter=self._document_filter(document_id),
             limit=limit,
             with_payload=True,
             with_vectors=False,
@@ -143,9 +166,17 @@ class InMemoryVectorStore:
 
         return results
 
-    def _create_collection(self, vector_size: int) -> None:
+    def _ensure_collection(self, vector_size: int) -> None:
+        if self._vector_size is not None and self._vector_size != vector_size:
+            raise ValueError(
+                "this vector store already contains "
+                f"{self._vector_size}-dimension vectors; "
+                f"got {vector_size}-dimension vectors."
+            )
+
         if self._client.collection_exists(self.collection_name):
-            self._client.delete_collection(self.collection_name)
+            self._vector_size = vector_size
+            return
 
         self._client.create_collection(
             collection_name=self.collection_name,
@@ -153,6 +184,20 @@ class InMemoryVectorStore:
                 size=vector_size,
                 distance=self._distance.COSINE,
             ),
+        )
+        self._vector_size = vector_size
+
+    def _document_filter(self, document_id: str | None):
+        if not document_id:
+            return None
+
+        return self._filter(
+            must=[
+                self._field_condition(
+                    key="document_id",
+                    match=self._match_value(value=document_id),
+                )
+            ]
         )
 
     def _validate_inputs(
@@ -179,3 +224,7 @@ def _preview_text(text: str, limit: int = 90) -> str:
         return compact_text
 
     return f"{compact_text[:limit].rstrip()}..."
+
+
+def _build_point_id(document_id: str, chunk_index: int) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document_id}:{chunk_index}"))
