@@ -177,6 +177,8 @@ def main() -> None:
                 search_results = vector_store.search(
                     query_vector=query_embedding.values,
                     limit=args.top_k,
+                    document_id=document_id,
+                    query_text=args.query,
                 )
 
                 if args.dry_run_answer:
@@ -233,7 +235,7 @@ def main() -> None:
                 )
 
     if args.query:
-        print("\n=== Semantic Search ===")
+        print("\n=== Hybrid Search ===")
         print(f"Query: {args.query}")
 
         if query_embedding:

@@ -110,7 +110,7 @@ For now, Qdrant runs in memory. That means the collection exists only while the
 program is running. This is perfect for learning Day 4 without Docker, services,
 or a separate database process.
 
-## Day 5: Semantic Search
+## Day 5: Hybrid Search
 
 Goal: ask a question and retrieve the most relevant stored chunks.
 
@@ -134,9 +134,30 @@ Day 5 process:
 4. Store chunk vectors in Qdrant.
 5. Embed the user query.
 6. Search Qdrant for the closest chunk vectors.
-7. Print the highest-scoring chunks.
+7. Score the real chunk text for keyword matches using BM25-style local search.
+8. Combine both scores and print the highest-scoring chunks.
 
 This is the retrieval part of Retrieval-Augmented Generation.
+
+Local search quality note:
+
+- Local embeddings now use 384 dimensions by default instead of 64, reducing
+  hash collisions between unrelated words.
+- Retrieval is hybrid: vector similarity helps with meaning, while lexical
+  scoring catches exact document labels such as `Frameworks/Libraries`,
+  `Databases`, `DevOps/Tools`, or specific skill names.
+
+CV example:
+
+```powershell
+python -B backend/main.py sample_docs/My_CV.pdf --chunk-size 600 --overlap 120 --query "What are the Frameworks/Libraries here?" --top-k 3
+```
+
+That query should retrieve the `TECHNICAL SKILLS` chunk containing:
+
+```text
+Frameworks/Libraries: Laravel, CodeIgniter, Express.js, React.js, Vue.js, Redux, jQuery
+```
 
 ## Day 6: Grounded Gemini Answers
 
@@ -272,6 +293,16 @@ Invoke-RestMethod `
   -Body '{"query":"Why do chunks overlap?","top_k":1,"answer":true}'
 ```
 
+Use Gemini 2.5 Pro for a stronger answer model:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/documents/$($upload.document_id)/query" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body '{"query":"Why do chunks overlap?","top_k":1,"answer":true,"llm_model":"gemini-2.5-pro"}'
+```
+
 List uploaded documents:
 
 ```powershell
@@ -322,3 +353,64 @@ Day 9 flow:
 4. Ask a question in the browser.
 5. The frontend calls `POST /documents/{document_id}/query`.
 6. The UI renders the answer and source chunks.
+
+## Day 10: Full Integration
+
+Goal: run the whole system as one app and verify the important paths.
+
+Start the integrated server:
+
+```powershell
+python -B -m uvicorn api:app --app-dir backend --host 127.0.0.1 --port 8000
+```
+
+Open the app:
+
+```text
+http://127.0.0.1:8000/app
+```
+
+API docs are still available:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Run the smoke test in another terminal:
+
+```powershell
+python -B scripts/smoke_test.py
+```
+
+The smoke test checks:
+
+- API version and system status
+- frontend serving from `/app`
+- document upload and vector storage
+- document-specific hybrid search
+- grounded prompt creation without spending a Gemini API call
+- document deletion and vector cleanup
+
+Day 10 process:
+
+1. FastAPI serves both API routes and the frontend.
+2. The browser app uploads documents to the backend.
+3. The backend stores vectors in memory.
+4. The browser asks questions by `document_id`.
+5. The backend retrieves sources and optionally asks Gemini for a grounded answer.
+6. The smoke test confirms the main workflow is still healthy.
+
+In the browser, use the `Model` selector to switch between `gemini-2.5-flash`
+and `gemini-2.5-pro`. Flash is the fast default; Pro is the stronger reasoning
+option and may use more quota.
+
+Delete unused documents:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/documents/$($upload.document_id)" `
+  -Method Delete
+```
+
+Deleting a document removes its metadata from API memory and deletes its vectors
+from the in-memory Qdrant collection.

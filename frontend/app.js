@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = getApiBase();
 
 const state = {
   documents: [],
@@ -20,6 +20,7 @@ const elements = {
   selectedMeta: document.querySelector("#selectedMeta"),
   questionInput: document.querySelector("#questionInput"),
   topK: document.querySelector("#topK"),
+  modelSelect: document.querySelector("#modelSelect"),
   answerToggle: document.querySelector("#answerToggle"),
   askButton: document.querySelector("#askButton"),
   promptButton: document.querySelector("#promptButton"),
@@ -160,6 +161,7 @@ async function queryDocument({ promptOnly }) {
       top_k: Number(elements.topK.value),
       answer: !promptOnly && elements.answerToggle.checked,
       dry_run_answer: promptOnly,
+      llm_model: elements.modelSelect.value,
     };
     const data = await apiFetch(`/documents/${selected.document_id}/query`, {
       method: "POST",
@@ -200,21 +202,63 @@ function renderDocuments() {
   }
 
   for (const documentRecord of state.documents) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "document-card";
-    button.classList.toggle("active", documentRecord.document_id === state.selectedDocumentId);
-    button.innerHTML = `
-      <strong>${escapeHtml(documentRecord.filename)}</strong>
-      <small>${documentRecord.chunk_count} chunks | ${documentRecord.vector_count} vectors</small>
-      <small>${escapeHtml(documentRecord.document_id)}</small>
+    const card = document.createElement("article");
+    card.className = "document-card";
+    card.classList.toggle("active", documentRecord.document_id === state.selectedDocumentId);
+    card.innerHTML = `
+      <button class="document-select" type="button">
+        <strong>${escapeHtml(documentRecord.filename)}</strong>
+        <small>${documentRecord.chunk_count} chunks | ${documentRecord.vector_count} vectors</small>
+        <small>${escapeHtml(documentRecord.document_id)}</small>
+      </button>
+      <button class="document-delete" type="button" title="Delete document">Delete</button>
     `;
-    button.addEventListener("click", () => {
+
+    card.querySelector(".document-select").addEventListener("click", () => {
       state.selectedDocumentId = documentRecord.document_id;
       renderDocuments();
       renderSelectedDocument();
     });
-    elements.documentList.appendChild(button);
+
+    card.querySelector(".document-delete").addEventListener("click", () => {
+      deleteDocument(documentRecord.document_id);
+    });
+
+    elements.documentList.appendChild(card);
+  }
+}
+
+async function deleteDocument(documentId) {
+  const documentRecord = state.documents.find((document) => document.document_id === documentId);
+  const filename = documentRecord?.filename || documentId;
+
+  if (!window.confirm(`Delete ${filename} and clear its vectors from memory?`)) {
+    return;
+  }
+
+  setBusy(true);
+  showMessage("Deleting document...");
+
+  try {
+    const result = await apiFetch(`/documents/${documentId}`, {
+      method: "DELETE",
+    });
+
+    if (state.selectedDocumentId === documentId) {
+      state.selectedDocumentId = null;
+      renderAnswer("Document deleted.");
+      renderSources([]);
+      elements.answerModel.textContent = "";
+      elements.promptPanel.classList.add("hidden");
+      elements.promptBox.textContent = "";
+    }
+
+    await refreshDocuments();
+    showMessage(`Deleted ${result.filename}; cleared ${result.vectors_deleted} vectors.`, "success");
+  } catch (error) {
+    showMessage(error.message, "error");
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -315,4 +359,12 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function getApiBase() {
+  if (window.location.port === "8000") {
+    return window.location.origin;
+  }
+
+  return `${window.location.protocol}//${window.location.hostname}:8000`;
 }

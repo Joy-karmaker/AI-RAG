@@ -10,7 +10,7 @@ from rag.config import get_gemini_api_key, load_env_file
 
 
 TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]+")
-DEFAULT_LOCAL_DIMENSIONS = 64
+DEFAULT_LOCAL_DIMENSIONS = 384
 DEFAULT_GEMINI_MODEL = "gemini-embedding-2"
 STOP_WORDS = {
     "a",
@@ -25,6 +25,7 @@ STOP_WORDS = {
     "does",
     "for",
     "from",
+    "here",
     "how",
     "in",
     "is",
@@ -34,6 +35,9 @@ STOP_WORDS = {
     "or",
     "that",
     "the",
+    "there",
+    "these",
+    "those",
     "this",
     "to",
     "what",
@@ -124,7 +128,7 @@ def _embed_with_local_hashing(texts: list[str], dimensions: int) -> list[Embeddi
 
 def _local_hash_embedding(text: str, dimensions: int) -> list[float]:
     vector = [0.0] * dimensions
-    tokens = _tokenize_for_local_embedding(text)
+    tokens = tokenize_for_local_search(text)
 
     for token in tokens:
         digest = hashlib.sha256(token.encode("utf-8")).digest()
@@ -135,7 +139,8 @@ def _local_hash_embedding(text: str, dimensions: int) -> list[float]:
     return _normalize(vector)
 
 
-def _tokenize_for_local_embedding(text: str) -> list[str]:
+def tokenize_for_local_search(text: str) -> list[str]:
+    """Tokenize text once so local embeddings and lexical search agree."""
     tokens = []
 
     for raw_token in TOKEN_PATTERN.findall(text.lower()):

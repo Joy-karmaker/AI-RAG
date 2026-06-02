@@ -8,6 +8,8 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from rag.chunking import chunk_text
@@ -20,8 +22,8 @@ from rag.vector_store import DEFAULT_COLLECTION_NAME, InMemoryVectorStore
 
 app = FastAPI(
     title="AI-RAG API",
-    version="0.8.0",
-    description="Day 8 connected backend for the AI-RAG learning project.",
+    version="1.0.0",
+    description="Integrated API and frontend for the AI-RAG learning project.",
 )
 
 app.add_middleware(
@@ -39,6 +41,8 @@ app.add_middleware(
 
 vector_store = InMemoryVectorStore(collection_name=DEFAULT_COLLECTION_NAME)
 documents: dict[str, "DocumentRecord"] = {}
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 
 @dataclass(frozen=True)
@@ -121,6 +125,13 @@ class DocumentListResponse(BaseModel):
     documents: list[DocumentUploadResponse]
 
 
+class DocumentDeleteResponse(BaseModel):
+    document_id: str
+    filename: str
+    vectors_deleted: int
+    remaining_documents: int
+
+
 class DocumentQueryRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=3, gt=0)
@@ -145,6 +156,7 @@ def read_root() -> dict[str, object]:
     return {
         "name": "AI-RAG API",
         "version": app.version,
+        "app": "/app",
         "docs": "/docs",
         "health": "/health",
     }
@@ -156,6 +168,22 @@ def health_check() -> dict[str, object]:
         "status": "ok",
         "processed_documents": len(documents),
     }
+
+
+@app.get("/system/status")
+def system_status() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "api_version": app.version,
+        "frontend_available": FRONTEND_DIR.exists(),
+        "processed_documents": len(documents),
+        "vector_collection": DEFAULT_COLLECTION_NAME,
+    }
+
+
+@app.get("/app")
+def frontend_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/app/")
 
 
 @app.post("/chunks", response_model=ChunkResponse)
@@ -301,6 +329,25 @@ def get_document(document_id: str) -> DocumentUploadResponse:
     return _document_record_to_response(record)
 
 
+@app.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
+def delete_document(document_id: str) -> DocumentDeleteResponse:
+    record = _get_document_record(document_id)
+
+    try:
+        vectors_deleted = vector_store.delete_document(document_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    del documents[document_id]
+
+    return DocumentDeleteResponse(
+        document_id=document_id,
+        filename=record.filename,
+        vectors_deleted=vectors_deleted,
+        remaining_documents=len(documents),
+    )
+
+
 @app.post("/documents/{document_id}/query", response_model=DocumentQueryResponse)
 def query_uploaded_document(
     document_id: str,
@@ -323,6 +370,7 @@ def query_uploaded_document(
             query_vector=query_embedding.values,
             limit=request.top_k,
             document_id=document_id,
+            query_text=request.query,
         )
 
         prompt = None
@@ -378,6 +426,7 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
     search_results = request_vector_store.search(
         query_vector=query_embedding.values,
         limit=request.top_k,
+        query_text=request.query,
     )
 
     return (
@@ -437,3 +486,11 @@ def _search_results_to_payload(search_results: list) -> list[SearchResultPayload
         )
         for rank, result in enumerate(search_results, start=1)
     ]
+
+
+if FRONTEND_DIR.exists():
+    app.mount(
+        "/app",
+        StaticFiles(directory=FRONTEND_DIR, html=True),
+        name="frontend",
+    )

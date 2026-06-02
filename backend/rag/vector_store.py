@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import math
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 
 from rag.chunking import TextChunk
-from rag.embeddings import EmbeddingResult
+from rag.embeddings import EmbeddingResult, tokenize_for_local_search
 
 
 DEFAULT_COLLECTION_NAME = "ai_rag_chunks"
+HYBRID_LEXICAL_WEIGHT = 0.7
+HYBRID_VECTOR_WEIGHT = 0.3
 
 
 @dataclass(frozen=True)
@@ -128,43 +132,78 @@ class InMemoryVectorStore:
 
         return previews
 
+    def count_document_points(self, document_id: str) -> int:
+        records, _ = self._client.scroll(
+            collection_name=self.collection_name,
+            limit=10_000,
+            scroll_filter=self._document_filter(document_id),
+            with_payload=False,
+            with_vectors=False,
+        )
+
+        return len(records)
+
+    def delete_document(self, document_id: str) -> int:
+        """Delete all stored vectors for one document and return deleted count."""
+        deleted_count = self.count_document_points(document_id)
+
+        if deleted_count == 0:
+            return 0
+
+        self._client.delete(
+            collection_name=self.collection_name,
+            points_selector=self._document_filter(document_id),
+            wait=True,
+        )
+
+        return deleted_count
+
     def search(
         self,
         query_vector: list[float],
         limit: int = 3,
         document_id: str | None = None,
+        query_text: str | None = None,
+        hybrid: bool = True,
     ) -> list[SearchResult]:
-        """Find stored chunks whose vectors are closest to the query vector."""
+        """Find stored chunks with vector search, optionally reranked by local text search."""
         if limit <= 0:
             raise ValueError("search limit must be greater than 0.")
 
+        candidate_limit = max(limit * 4, limit)
         response = self._client.query_points(
             collection_name=self.collection_name,
             query=query_vector,
             query_filter=self._document_filter(document_id),
-            limit=limit,
+            limit=candidate_limit,
             with_payload=True,
             with_vectors=False,
         )
 
-        results = []
-        for point in response.points:
-            payload = point.payload or {}
-            text = str(payload.get("text", ""))
-            results.append(
-                SearchResult(
-                    id=point.id,
-                    score=point.score,
-                    document_id=str(payload.get("document_id", "")),
-                    chunk_index=int(payload.get("chunk_index", 0)),
-                    start=int(payload.get("start", 0)),
-                    end=int(payload.get("end", 0)),
-                    text=text,
-                    text_preview=_preview_text(text),
-                )
-            )
+        if not hybrid or not query_text:
+            return [
+                _payload_to_search_result(point.id, point.payload or {}, point.score)
+                for point in response.points[:limit]
+            ]
 
-        return results
+        records = self._scroll_records(document_id)
+        return _build_hybrid_search_results(
+            query_text=query_text,
+            vector_points=response.points,
+            records=records,
+            limit=limit,
+        )
+
+    def _scroll_records(self, document_id: str | None):
+        records, _ = self._client.scroll(
+            collection_name=self.collection_name,
+            limit=10_000,
+            scroll_filter=self._document_filter(document_id),
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        return records
 
     def _ensure_collection(self, vector_size: int) -> None:
         if self._vector_size is not None and self._vector_size != vector_size:
@@ -228,3 +267,197 @@ def _preview_text(text: str, limit: int = 90) -> str:
 
 def _build_point_id(document_id: str, chunk_index: int) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document_id}:{chunk_index}"))
+
+
+def _build_hybrid_search_results(
+    query_text: str,
+    vector_points,
+    records,
+    limit: int,
+) -> list[SearchResult]:
+    record_by_id = {_point_key(record.id): record for record in records}
+    vector_scores = {
+        _point_key(point.id): float(point.score)
+        for point in vector_points
+    }
+    lexical_scores = _lexical_scores(query_text, records)
+
+    normalized_vectors = _normalize_score_map(vector_scores)
+    normalized_lexical = _normalize_score_map(lexical_scores)
+    candidate_ids = set(normalized_vectors) | {
+        point_id
+        for point_id, score in lexical_scores.items()
+        if score > 0
+    }
+
+    if not candidate_ids:
+        candidate_ids = set(normalized_vectors)
+
+    ranked_candidates = []
+    for point_id in candidate_ids:
+        record = record_by_id.get(point_id)
+
+        if not record:
+            continue
+
+        payload = record.payload or {}
+        score = (
+            HYBRID_LEXICAL_WEIGHT * normalized_lexical.get(point_id, 0.0)
+            + HYBRID_VECTOR_WEIGHT * normalized_vectors.get(point_id, 0.0)
+        )
+        ranked_candidates.append(
+            (
+                score,
+                int(payload.get("chunk_index", 0)),
+                record,
+            )
+        )
+
+    ranked_candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
+    positive_candidates = [
+        candidate
+        for candidate in ranked_candidates
+        if candidate[0] > 0
+    ]
+
+    if positive_candidates:
+        ranked_candidates = positive_candidates
+
+    return [
+        _payload_to_search_result(record.id, record.payload or {}, score)
+        for score, _, record in ranked_candidates[:limit]
+    ]
+
+
+def _lexical_scores(query_text: str, records) -> dict[str, float]:
+    query_terms = list(dict.fromkeys(tokenize_for_local_search(query_text)))
+
+    if not query_terms:
+        return {}
+
+    document_stats = []
+    document_frequency = Counter()
+
+    for record in records:
+        payload = record.payload or {}
+        text = str(payload.get("text", ""))
+        tokens = tokenize_for_local_search(text)
+        token_counts = Counter(tokens)
+        document_stats.append((record, text, token_counts, len(tokens)))
+
+        for term in query_terms:
+            if token_counts.get(term, 0) > 0:
+                document_frequency[term] += 1
+
+    if not document_stats:
+        return {}
+
+    document_count = len(document_stats)
+    average_document_length = (
+        sum(length for _, _, _, length in document_stats) / document_count
+    ) or 1.0
+    scores: dict[str, float] = {}
+    k1 = 1.5
+    b = 0.75
+
+    for record, text, token_counts, document_length in document_stats:
+        score = 0.0
+        normalized_length = max(document_length, 1)
+
+        for term in query_terms:
+            term_frequency = token_counts.get(term, 0)
+
+            if term_frequency <= 0:
+                continue
+
+            term_document_frequency = document_frequency[term]
+            inverse_document_frequency = math.log(
+                1
+                + (
+                    document_count
+                    - term_document_frequency
+                    + 0.5
+                )
+                / (term_document_frequency + 0.5)
+            )
+            denominator = term_frequency + k1 * (
+                1 - b + b * normalized_length / average_document_length
+            )
+            score += (
+                inverse_document_frequency
+                * term_frequency
+                * (k1 + 1)
+                / denominator
+            )
+
+        matched_terms = sum(
+            1
+            for term in query_terms
+            if token_counts.get(term, 0) > 0
+        )
+
+        if matched_terms:
+            score += 0.35 * matched_terms / len(query_terms)
+
+        if _has_section_label_match(query_terms, text):
+            score += 0.65
+
+        if score > 0:
+            scores[_point_key(record.id)] = score
+
+    return scores
+
+
+def _has_section_label_match(query_terms: list[str], text: str) -> bool:
+    lowered_text = text.lower()
+    section_terms = {
+        "framework": ("framework", "frameworks"),
+        "library": ("library", "libraries"),
+        "skill": ("skill", "skills"),
+        "tool": ("tool", "tools"),
+        "technology": ("technology", "technologies"),
+    }
+
+    for query_term, text_terms in section_terms.items():
+        if query_term in query_terms and any(term in lowered_text for term in text_terms):
+            return True
+
+    return False
+
+
+def _normalize_score_map(scores: dict[str, float]) -> dict[str, float]:
+    positive_scores = {
+        point_id: max(score, 0.0)
+        for point_id, score in scores.items()
+    }
+    highest_score = max(positive_scores.values(), default=0.0)
+
+    if highest_score <= 0:
+        return {
+            point_id: 0.0
+            for point_id in positive_scores
+        }
+
+    return {
+        point_id: score / highest_score
+        for point_id, score in positive_scores.items()
+    }
+
+
+def _payload_to_search_result(point_id, payload: dict, score: float) -> SearchResult:
+    text = str(payload.get("text", ""))
+
+    return SearchResult(
+        id=point_id,
+        score=float(score),
+        document_id=str(payload.get("document_id", "")),
+        chunk_index=int(payload.get("chunk_index", 0)),
+        start=int(payload.get("start", 0)),
+        end=int(payload.get("end", 0)),
+        text=text,
+        text_preview=_preview_text(text),
+    )
+
+
+def _point_key(point_id) -> str:
+    return str(point_id)
