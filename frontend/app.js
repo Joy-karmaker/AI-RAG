@@ -304,7 +304,7 @@ function renderSources(results) {
         <span>Chunk ${result.chunk_index}</span>
         <span>${Number(result.score).toFixed(4)}</span>
       </header>
-      <p>${escapeHtml(result.text_preview || result.text || "")}</p>
+      <pre class="source-full-text">${escapeHtml(result.text || result.text_preview || "")}</pre>
     `;
     elements.sourcesList.appendChild(article);
   }

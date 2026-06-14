@@ -1,0 +1,115 @@
+[
+  {
+    "id": "day2_overlap_reason",
+    "document": "sample_docs/day2_long.txt",
+    "question": "Why should chunks overlap?",
+    "expected_answer": "Chunks overlap so an answer that starts at the end of one chunk and finishes at the beginning of the next is not lost.",
+    "expected_source_terms": [
+      "without overlap",
+      "neither chunk has the full idea",
+      "complete meaning"
+    ]
+  },
+  {
+    "id": "day2_rag_definition",
+    "document": "sample_docs/day2_long.txt",
+    "question": "What is Retrieval-Augmented Generation?",
+    "expected_answer": "RAG helps an AI answer questions using useful passages retrieved from trusted documents.",
+    "expected_source_terms": [
+      "retrieval-augmented generation",
+      "retrieves useful passages",
+      "trusted document"
+    ]
+  },
+  {
+    "id": "day2_text_extraction",
+    "document": "sample_docs/day2_long.txt",
+    "question": "What is the first step in the RAG pipeline?",
+    "expected_answer": "The first step is text extraction: converting a PDF, text file, Markdown file, or other document into plain text.",
+    "expected_source_terms": [
+      "first step",
+      "text extraction",
+      "plain text"
+    ]
+  },
+  {
+    "id": "day2_embeddings_next",
+    "document": "sample_docs/day2_long.txt",
+    "question": "What happens after chunking?",
+    "expected_answer": "After chunking, each chunk is converted into an embedding vector.",
+    "expected_source_terms": [
+      "after chunking",
+      "embeddings",
+      "converted into a vector"
+    ]
+  },
+  {
+    "id": "cv_frameworks",
+    "document": "sample_docs/My_CV.pdf",
+    "question": "What frameworks and libraries are listed in the CV?",
+    "expected_answer": "Laravel, CodeIgniter, Express.js, React.js, Vue.js, Redux, and jQuery.",
+    "expected_source_terms": [
+      "frameworks/libraries",
+      "laravel",
+      "codeigniter",
+      "react.js"
+    ]
+  },
+  {
+    "id": "cv_databases",
+    "document": "sample_docs/My_CV.pdf",
+    "question": "Which databases are listed?",
+    "expected_answer": "MySQL, PostgreSQL, SQLite, and MongoDB.",
+    "expected_source_terms": [
+      "databases",
+      "mysql",
+      "postgresql",
+      "mongodb"
+    ]
+  },
+  {
+    "id": "cv_devops_tools",
+    "document": "sample_docs/My_CV.pdf",
+    "question": "What DevOps tools are mentioned?",
+    "expected_answer": "Docker, GitHub Actions, CI/CD Pipelines, Codex, Claude, and Gemini.",
+    "expected_source_terms": [
+      "devops/tools",
+      "docker",
+      "github actions",
+      "gemini"
+    ]
+  },
+  {
+    "id": "cv_current_company",
+    "document": "sample_docs/My_CV.pdf",
+    "question": "Where does Joy currently work?",
+    "expected_answer": "Joy currently works at Datasoft Systems Bangladesh Ltd. as a Senior Software Engineer.",
+    "expected_source_terms": [
+      "datasoft systems bangladesh ltd",
+      "senior software engineer",
+      "jan 2024"
+    ]
+  },
+  {
+    "id": "cv_microfin_scale",
+    "document": "sample_docs/My_CV.pdf",
+    "question": "How many microfinance institutions did MicroFin360NEXT serve?",
+    "expected_answer": "MicroFin360NEXT served 360+ microfinance institutions.",
+    "expected_source_terms": [
+      "microfin360next",
+      "360+ microfinance institutions",
+      "multi-tenant"
+    ]
+  },
+  {
+    "id": "cv_education",
+    "document": "sample_docs/My_CV.pdf",
+    "question": "What is Joy's education?",
+    "expected_answer": "B.Sc. in Computer Science and Engineering from Patuakhali Science and Technology University.",
+    "expected_source_terms": [
+      "education",
+      "b.sc. in computer science and engineering",
+      "patuakhali science and technology university"
+    ]
+  }
+]

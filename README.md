@@ -414,3 +414,34 @@ Invoke-RestMethod `
 
 Deleting a document removes its metadata from API memory and deletes its vectors
 from the in-memory Qdrant collection.
+
+## Day 11: RAG Evaluation Baseline
+
+Goal: create a repeatable question set and measure whether retrieval finds the
+right evidence.
+
+Run the evaluation:
+
+```powershell
+python -B scripts/evaluate_retrieval.py
+```
+
+Show retrieved passage previews for debugging:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --show-passages
+```
+
+What the evaluation checks:
+
+- loads questions from `eval/eval_questions.json`
+- indexes each referenced sample document
+- runs the same local hybrid retrieval pipeline
+- checks whether the expected source terms appear in the top retrieved chunks
+- prints `Recall@3` as the first retrieval quality baseline
+
+Why this matters:
+
+- RAG quality should be measured, not guessed.
+- Failed questions show where chunking, embeddings, or search ranking need work.
+- This baseline gives future improvements something concrete to beat.
