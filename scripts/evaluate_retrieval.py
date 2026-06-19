@@ -20,6 +20,7 @@ from rag.vector_store import InMemoryVectorStore
 
 
 DEFAULT_EVAL_FILE = PROJECT_ROOT / "eval" / "eval_questions.json"
+DEFAULT_RECALL_CUTOFFS = (1, 3, 5)
 
 
 @dataclass(frozen=True)
@@ -64,8 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--top-k",
         type=int,
-        default=3,
-        help="Number of retrieved chunks to inspect for each question. Default: 3.",
+        default=5,
+        help="Number of retrieved chunks to inspect for each question. Default: 5.",
     )
     parser.add_argument(
         "--embedding-dimensions",
@@ -113,25 +114,28 @@ def main() -> None:
         )
 
     print_header("Retrieval Evaluation")
-    hits = sum(1 for result in results if result["hit"])
     total = len(results)
-    recall_at_k = hits / total if total else 0.0
+    metric_cutoffs = recall_cutoffs(args.top_k)
+    metrics = calculate_metrics(results, metric_cutoffs)
 
     for result in results:
-        status = "PASS" if result["hit"] else "FAIL"
+        status = "PASS" if result["rank"] else "FAIL"
         print(
             f"{status} {result['id']} | rank={result['rank'] or '-'} | "
+            f"rr={result['reciprocal_rank']:.4f} | "
             f"question={result['question']}"
         )
 
     print_header("Summary")
     print(f"Questions: {total}")
-    print(f"Hits@{args.top_k}: {hits}")
-    print(f"Recall@{args.top_k}: {recall_at_k:.2%}")
+    for cutoff in metric_cutoffs:
+        print(f"Hits@{cutoff}: {metrics[f'hits@{cutoff}']}")
+        print(f"Recall@{cutoff}: {metrics[f'recall@{cutoff}']:.2%}")
+    print(f"MRR@{args.top_k}: {metrics['mrr']:.4f}")
 
-    failed = [result for result in results if not result["hit"]]
+    failed = [result for result in results if not result["rank"]]
     if failed:
-        print("\nFailed questions to inspect:")
+        print(f"\nFailed questions to inspect at top {args.top_k}:")
         for result in failed:
             print(f"- {result['id']}: {result['question']}")
 
@@ -242,8 +246,8 @@ def evaluate_cases(
             {
                 "id": case.id,
                 "question": case.question,
-                "hit": rank is not None,
                 "rank": rank,
+                "reciprocal_rank": reciprocal_rank(rank),
             }
         )
 
@@ -269,6 +273,49 @@ def first_matching_rank(search_results, expected_terms: list[str]) -> int | None
             return rank
 
     return None
+
+
+def calculate_metrics(
+    results: list[dict[str, object]],
+    cutoffs: list[int],
+) -> dict[str, float | int]:
+    total = len(results)
+    metrics: dict[str, float | int] = {}
+
+    for cutoff in cutoffs:
+        hits = sum(
+            1
+            for result in results
+            if result["rank"] is not None and int(result["rank"]) <= cutoff
+        )
+        metrics[f"hits@{cutoff}"] = hits
+        metrics[f"recall@{cutoff}"] = hits / total if total else 0.0
+
+    metrics["mrr"] = (
+        sum(float(result["reciprocal_rank"]) for result in results) / total
+        if total
+        else 0.0
+    )
+    return metrics
+
+
+def recall_cutoffs(top_k: int) -> list[int]:
+    if top_k <= 0:
+        raise ValueError("top-k must be greater than 0.")
+
+    cutoffs = [cutoff for cutoff in DEFAULT_RECALL_CUTOFFS if cutoff <= top_k]
+
+    if top_k not in cutoffs:
+        cutoffs.append(top_k)
+
+    return sorted(set(cutoffs))
+
+
+def reciprocal_rank(rank: int | None) -> float:
+    if rank is None:
+        return 0.0
+
+    return 1.0 / rank
 
 
 def document_to_id(document_path: Path) -> str:

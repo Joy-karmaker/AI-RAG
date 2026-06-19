@@ -445,3 +445,33 @@ Why this matters:
 - RAG quality should be measured, not guessed.
 - Failed questions show where chunking, embeddings, or search ranking need work.
 - This baseline gives future improvements something concrete to beat.
+
+## Day 12: Retrieval Metrics
+
+Goal: turn the Day 11 evaluation set into measurable retrieval scores.
+
+Run the metrics report:
+
+```powershell
+python -B scripts/evaluate_retrieval.py
+```
+
+The report now includes:
+
+- `Recall@1`: the expected source was the first retrieved chunk.
+- `Recall@3`: the expected source appeared anywhere in the top 3 chunks.
+- `Recall@5`: the expected source appeared anywhere in the top 5 chunks.
+- `MRR@5`: mean reciprocal rank, which rewards correct sources appearing higher.
+
+Use a different retrieval depth:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --top-k 10
+```
+
+Why this matters:
+
+- `Recall@k` tells you whether the retriever found the right evidence.
+- `MRR` tells you whether the right evidence appeared near the top.
+- These metrics let you compare future chunking, embedding, hybrid search, and
+  reranking changes objectively.
