@@ -63,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Chunk overlap used while indexing eval documents. Default: 120.",
     )
     parser.add_argument(
+        "--chunk-strategy",
+        choices=("character", "paragraph", "heading", "page"),
+        default="character",
+        help="Chunking strategy to evaluate. Default: character.",
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=5,
@@ -93,6 +99,7 @@ def main() -> None:
             vector_store=vector_store,
             chunk_size=args.chunk_size,
             overlap=args.overlap,
+            strategy=args.chunk_strategy,
             embedding_dimensions=args.embedding_dimensions,
         )
         results = evaluate_cases(
@@ -114,6 +121,7 @@ def main() -> None:
         )
 
     print_header("Retrieval Evaluation")
+    print(f"Chunk strategy: {args.chunk_strategy}")
     total = len(results)
     metric_cutoffs = recall_cutoffs(args.top_k)
     metrics = calculate_metrics(results, metric_cutoffs)
@@ -191,6 +199,7 @@ def index_documents(
     vector_store: InMemoryVectorStore,
     chunk_size: int,
     overlap: int,
+    strategy: str,
     embedding_dimensions: int,
 ) -> list[IndexedDocument]:
     indexed_documents = []
@@ -199,7 +208,12 @@ def index_documents(
     for document_path in unique_documents:
         document_id = document_to_id(document_path)
         text = extract_file_text(document_path)
-        chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+        chunks = chunk_text(
+            text,
+            chunk_size=chunk_size,
+            overlap=overlap,
+            strategy=strategy,
+        )
         embeddings = embed_texts(
             [chunk.text for chunk in chunks],
             dimensions=embedding_dimensions,
@@ -258,6 +272,8 @@ def evaluate_cases(
             for result_rank, result in enumerate(search_results, start=1):
                 print(
                     f"{result_rank}. chunk={result.chunk_index} "
+                    f"page={result.page or '-'} "
+                    f"section={result.section_title or '-'} "
                     f"score={result.score:.4f} preview={result.text_preview}"
                 )
 

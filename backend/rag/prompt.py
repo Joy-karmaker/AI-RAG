@@ -41,12 +41,22 @@ def _format_context(search_results: list[SearchResult]) -> str:
     blocks = []
 
     for rank, result in enumerate(search_results, start=1):
+        source_metadata = [
+            f"Document: {result.document_id}",
+            f"Chunk: {result.chunk_index}",
+        ]
+
+        if result.page is not None:
+            source_metadata.append(f"Page: {result.page}")
+
+        if result.section_title:
+            source_metadata.append(f"Section: {result.section_title}")
+
         blocks.append(
             "\n".join(
                 [
                     f"[Source {rank}]",
-                    f"Document: {result.document_id}",
-                    f"Chunk: {result.chunk_index}",
+                    *source_metadata,
                     f"Similarity score: {result.score:.4f}",
                     "Text:",
                     result.text.strip(),

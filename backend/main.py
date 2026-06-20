@@ -40,6 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Characters repeated between neighboring chunks. Default: 200.",
     )
     parser.add_argument(
+        "--chunk-strategy",
+        choices=("character", "paragraph", "heading", "page"),
+        default="character",
+        help="Chunking strategy to use. Default: character.",
+    )
+    parser.add_argument(
         "--show-text",
         action="store_true",
         help="Print the full extracted document text before chunking.",
@@ -127,7 +133,12 @@ def main() -> None:
 
     try:
         text = extract_file_text(args.file_path)
-        chunks = chunk_text(text, chunk_size=args.chunk_size, overlap=args.overlap)
+        chunks = chunk_text(
+            text,
+            chunk_size=args.chunk_size,
+            overlap=args.overlap,
+            strategy=args.chunk_strategy,
+        )
         embeddings = []
         stored_count = 0
         stored_previews = []
@@ -202,6 +213,10 @@ def main() -> None:
 
     for chunk in chunks:
         print(f"\n--- Chunk {chunk.index} ({chunk.start}-{chunk.end}) ---")
+        if chunk.page is not None:
+            print(f"Page: {chunk.page}")
+        if chunk.section_title:
+            print(f"Section: {chunk.section_title}")
         print(chunk.text)
 
     if args.embed or args.store_vectors or args.query or args.answer or args.dry_run_answer:
@@ -273,6 +288,7 @@ def main() -> None:
     print(f"Chunks created: {len(chunks)}")
     print(f"Chunk size: {args.chunk_size}")
     print(f"Overlap: {args.overlap}")
+    print(f"Chunk strategy: {args.chunk_strategy}")
 
     if args.embed or args.store_vectors or args.query or args.answer or args.dry_run_answer:
         print(f"Embeddings created: {len(embeddings)}")

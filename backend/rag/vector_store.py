@@ -31,6 +31,8 @@ class SearchResult:
     end: int
     text: str
     text_preview: str
+    page: int | None = None
+    section_title: str | None = None
 
 
 class InMemoryVectorStore:
@@ -90,6 +92,8 @@ class InMemoryVectorStore:
                         "chunk_index": chunk.index,
                         "start": chunk.start,
                         "end": chunk.end,
+                        "page": chunk.page,
+                        "section_title": chunk.section_title,
                         "text": chunk.text,
                         "embedding_provider": embedding.provider,
                         "embedding_model": embedding.model,
@@ -341,9 +345,10 @@ def _lexical_scores(query_text: str, records) -> dict[str, float]:
     for record in records:
         payload = record.payload or {}
         text = str(payload.get("text", ""))
+        section_title = str(payload.get("section_title", ""))
         tokens = tokenize_for_local_search(text)
         token_counts = Counter(tokens)
-        document_stats.append((record, text, token_counts, len(tokens)))
+        document_stats.append((record, text, section_title, token_counts, len(tokens)))
 
         for term in query_terms:
             if token_counts.get(term, 0) > 0:
@@ -354,13 +359,13 @@ def _lexical_scores(query_text: str, records) -> dict[str, float]:
 
     document_count = len(document_stats)
     average_document_length = (
-        sum(length for _, _, _, length in document_stats) / document_count
+        sum(length for _, _, _, _, length in document_stats) / document_count
     ) or 1.0
     scores: dict[str, float] = {}
     k1 = 1.5
     b = 0.75
 
-    for record, text, token_counts, document_length in document_stats:
+    for record, text, section_title, token_counts, document_length in document_stats:
         score = 0.0
         normalized_length = max(document_length, 1)
 
@@ -402,6 +407,8 @@ def _lexical_scores(query_text: str, records) -> dict[str, float]:
         if _has_section_label_match(query_terms, text):
             score += 0.65
 
+        score += _metadata_aware_bonus(query_terms, text, section_title)
+
         if score > 0:
             scores[_point_key(record.id)] = score
 
@@ -425,6 +432,36 @@ def _has_section_label_match(query_terms: list[str], text: str) -> bool:
     return False
 
 
+def _metadata_aware_bonus(
+    query_terms: list[str],
+    text: str,
+    section_title: str,
+) -> float:
+    lowered_text = text.lower()
+    lowered_section = section_title.lower()
+    bonus = 0.0
+
+    if "professional experience" in lowered_section and any(
+        term in query_terms
+        for term in ("work", "company", "role", "job")
+    ):
+        bonus += 0.45
+
+    if "present" in lowered_text and any(
+        term in query_terms
+        for term in ("current", "currently", "work", "company", "role")
+    ):
+        bonus += 0.75
+
+    if "technical skills" in lowered_section and any(
+        term in query_terms
+        for term in ("database", "framework", "library", "tool", "skill")
+    ):
+        bonus += 0.35
+
+    return bonus
+
+
 def _normalize_score_map(scores: dict[str, float]) -> dict[str, float]:
     positive_scores = {
         point_id: max(score, 0.0)
@@ -446,6 +483,7 @@ def _normalize_score_map(scores: dict[str, float]) -> dict[str, float]:
 
 def _payload_to_search_result(point_id, payload: dict, score: float) -> SearchResult:
     text = str(payload.get("text", ""))
+    page = payload.get("page")
 
     return SearchResult(
         id=point_id,
@@ -456,6 +494,8 @@ def _payload_to_search_result(point_id, payload: dict, score: float) -> SearchRe
         end=int(payload.get("end", 0)),
         text=text,
         text_preview=_preview_text(text),
+        page=int(page) if page is not None else None,
+        section_title=payload.get("section_title"),
     )
 
 

@@ -475,3 +475,68 @@ Why this matters:
 - `MRR` tells you whether the right evidence appeared near the top.
 - These metrics let you compare future chunking, embedding, hybrid search, and
   reranking changes objectively.
+
+## Day 13: Structure-Aware Chunking
+
+Goal: compare basic character chunking with chunking that understands document
+structure.
+
+Run the original character-based baseline:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy character
+```
+
+Compare structure-aware strategies:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph
+python -B scripts/evaluate_retrieval.py --chunk-strategy heading
+python -B scripts/evaluate_retrieval.py --chunk-strategy page
+```
+
+Show retrieved passages with page and section metadata:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy heading --show-passages
+```
+
+Inspect chunks directly from the CLI:
+
+```powershell
+python -B backend/main.py sample_docs/My_CV.pdf --chunk-size 600 --overlap 120 --chunk-strategy heading
+```
+
+Available chunk strategies:
+
+- `character`: the original overlapping character splitter.
+- `paragraph`: groups nearby text lines into cleaner paragraph-aware chunks.
+- `heading`: keeps detected section headings attached to the text below them.
+- `page`: keeps PDF page boundaries separate while preserving headings.
+
+Chunk metadata now includes:
+
+- document id
+- chunk index
+- start and end character positions
+- page number when available
+- section title when detected
+
+The metadata is stored in Qdrant payloads, returned by API search results, and
+included in grounded prompts.
+
+Current metrics with the eval set:
+
+| Strategy | Recall@1 | Recall@3 | Recall@5 | MRR@5 |
+| :--- | ---: | ---: | ---: | ---: |
+| character | 60% | 100% | 100% | 0.7667 |
+| paragraph | 70% | 90% | 100% | 0.8250 |
+| heading | 60% | 90% | 100% | 0.7750 |
+| page | 60% | 90% | 100% | 0.7750 |
+
+Why this matters:
+
+- Better chunks make retrieved evidence easier to inspect.
+- Headings help section-specific questions find cleaner context.
+- Page metadata makes PDF sources easier to cite and debug.
+- Running the same Day 12 metrics proves whether a chunking strategy helped.

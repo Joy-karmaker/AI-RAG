@@ -59,6 +59,7 @@ class ChunkRequest(BaseModel):
     text: str = Field(..., min_length=1)
     chunk_size: int = Field(default=1000, gt=0)
     overlap: int = Field(default=200, ge=0)
+    strategy: str = "character"
 
 
 class ChunkPayload(BaseModel):
@@ -66,6 +67,8 @@ class ChunkPayload(BaseModel):
     start: int
     end: int
     text: str
+    page: Optional[int] = None
+    section_title: Optional[str] = None
 
 
 class ChunkResponse(BaseModel):
@@ -85,6 +88,7 @@ class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     chunk_size: int = Field(default=1000, gt=0)
     overlap: int = Field(default=200, ge=0)
+    strategy: str = "character"
     top_k: int = Field(default=3, gt=0)
     embedding_dimensions: int = Field(default=DEFAULT_LOCAL_DIMENSIONS, gt=0)
     document_id: Optional[str] = None
@@ -98,6 +102,8 @@ class SearchResultPayload(BaseModel):
     end: int
     text: str
     text_preview: str
+    page: Optional[int] = None
+    section_title: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -193,6 +199,7 @@ def create_chunks(request: ChunkRequest) -> ChunkResponse:
             request.text,
             chunk_size=request.chunk_size,
             overlap=request.overlap,
+            strategy=request.strategy,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -206,6 +213,8 @@ def create_chunks(request: ChunkRequest) -> ChunkResponse:
                 start=chunk.start,
                 end=chunk.end,
                 text=chunk.text,
+                page=chunk.page,
+                section_title=chunk.section_title,
             )
             for chunk in chunks
         ],
@@ -263,6 +272,7 @@ async def upload_document(
     file: UploadFile = File(...),
     chunk_size: int = Form(default=1000),
     overlap: int = Form(default=200),
+    strategy: str = Form(default="heading"),
     embedding_dimensions: int = Form(default=DEFAULT_LOCAL_DIMENSIONS),
     document_id: Optional[str] = Form(default=None),
 ) -> DocumentUploadResponse:
@@ -286,7 +296,12 @@ async def upload_document(
 
     try:
         text = _extract_upload_text(filename, content)
-        chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
+        chunks = chunk_text(
+            text,
+            chunk_size=chunk_size,
+            overlap=overlap,
+            strategy=strategy,
+        )
         embeddings = embed_texts(
             [chunk.text for chunk in chunks],
             dimensions=embedding_dimensions,
@@ -407,6 +422,7 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
         request.text,
         chunk_size=request.chunk_size,
         overlap=request.overlap,
+        strategy=request.strategy,
     )
     embeddings = embed_texts(
         [chunk.text for chunk in chunks],
@@ -483,6 +499,8 @@ def _search_results_to_payload(search_results: list) -> list[SearchResultPayload
             end=result.end,
             text=result.text,
             text_preview=result.text_preview,
+            page=result.page,
+            section_title=result.section_title,
         )
         for rank, result in enumerate(search_results, start=1)
     ]
