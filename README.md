@@ -540,3 +540,77 @@ Why this matters:
 - Headings help section-specific questions find cleaner context.
 - Page metadata makes PDF sources easier to cite and debug.
 - Running the same Day 12 metrics proves whether a chunking strategy helped.
+
+## Day 14: Embedding Provider Upgrade
+
+Goal: keep local embeddings as a fallback, add stronger embedding provider
+support, and compare providers with the same retrieval metrics.
+
+Run the local embedding baseline:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --embedding-provider local
+```
+
+Run the Gemini embedding evaluation after setting an API key:
+
+```powershell
+$env:GEMINI_API_KEY="your-api-key"
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --embedding-provider gemini
+```
+
+Choose a Gemini embedding model explicitly:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --embedding-provider gemini --gemini-model gemini-embedding-2
+```
+
+Upload a document with local embeddings through the API:
+
+```powershell
+$upload = curl.exe -s -X POST `
+  -F "file=@sample_docs/day2_long.txt" `
+  -F "chunk_size=600" `
+  -F "overlap=120" `
+  -F "strategy=paragraph" `
+  -F "embedding_provider=local" `
+  http://127.0.0.1:8000/documents/upload | ConvertFrom-Json
+```
+
+Upload a document with Gemini embeddings:
+
+```powershell
+$upload = curl.exe -s -X POST `
+  -F "file=@sample_docs/day2_long.txt" `
+  -F "chunk_size=600" `
+  -F "overlap=120" `
+  -F "strategy=paragraph" `
+  -F "embedding_provider=gemini" `
+  -F "gemini_model=gemini-embedding-2" `
+  http://127.0.0.1:8000/documents/upload | ConvertFrom-Json
+```
+
+What changed:
+
+- The retrieval evaluator now accepts `--embedding-provider local|gemini`.
+- The evaluator prints the embedding provider and model in the report.
+- Uploaded documents store `embedding_provider`, `embedding_model`, and
+  `embedding_dimensions`.
+- Document queries reuse the same embedding provider and model used at upload
+  time.
+- The browser upload panel can choose Local or Gemini embeddings.
+
+Current local baseline with paragraph chunking:
+
+| Provider | Model | Recall@1 | Recall@3 | Recall@5 | MRR@5 |
+| :--- | :--- | ---: | ---: | ---: | ---: |
+| local | local-hash-384 | 70% | 90% | 100% | 0.8250 |
+
+Why this matters:
+
+- Local embeddings are free, offline, and useful for learning.
+- Gemini embeddings are stronger semantic embeddings for production-style RAG.
+- Vector dimensions and model choice must stay consistent inside one vector
+  collection.
+- Running the same eval set shows whether the embedding provider improved
+  retrieval instead of guessing.

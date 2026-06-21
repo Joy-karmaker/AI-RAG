@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from rag.chunking import chunk_text
-from rag.embeddings import DEFAULT_LOCAL_DIMENSIONS, embed_texts
+from rag.embeddings import DEFAULT_GEMINI_MODEL, DEFAULT_LOCAL_DIMENSIONS, embed_texts
 from rag.extractor import extract_file_text
 from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
 from rag.prompt import build_grounded_prompt
@@ -53,6 +53,8 @@ class DocumentRecord:
     chunk_count: int
     vector_count: int
     embedding_dimensions: int
+    embedding_provider: str
+    embedding_model: str
 
 
 class ChunkRequest(BaseModel):
@@ -91,6 +93,8 @@ class SearchRequest(BaseModel):
     strategy: str = "character"
     top_k: int = Field(default=3, gt=0)
     embedding_dimensions: int = Field(default=DEFAULT_LOCAL_DIMENSIONS, gt=0)
+    embedding_provider: str = "local"
+    gemini_model: str = DEFAULT_GEMINI_MODEL
     document_id: Optional[str] = None
 
 
@@ -125,6 +129,8 @@ class DocumentUploadResponse(BaseModel):
     chunk_count: int
     vector_count: int
     embedding_dimensions: int
+    embedding_provider: str
+    embedding_model: str
 
 
 class DocumentListResponse(BaseModel):
@@ -274,6 +280,8 @@ async def upload_document(
     overlap: int = Form(default=200),
     strategy: str = Form(default="heading"),
     embedding_dimensions: int = Form(default=DEFAULT_LOCAL_DIMENSIONS),
+    embedding_provider: str = Form(default="local"),
+    gemini_model: str = Form(default=DEFAULT_GEMINI_MODEL),
     document_id: Optional[str] = Form(default=None),
 ) -> DocumentUploadResponse:
     if chunk_size <= 0:
@@ -286,6 +294,12 @@ async def upload_document(
         raise HTTPException(
             status_code=400,
             detail="embedding_dimensions must be greater than 0.",
+        )
+
+    if embedding_provider not in {"local", "gemini"}:
+        raise HTTPException(
+            status_code=400,
+            detail="embedding_provider must be 'local' or 'gemini'.",
         )
 
     filename = Path(file.filename or "uploaded_document").name
@@ -302,9 +316,14 @@ async def upload_document(
             overlap=overlap,
             strategy=strategy,
         )
+        if not chunks:
+            raise ValueError("No text chunks were created from this document.")
+
         embeddings = embed_texts(
             [chunk.text for chunk in chunks],
+            provider=embedding_provider,
             dimensions=embedding_dimensions,
+            gemini_model=gemini_model,
         )
         resolved_document_id = document_id or _new_document_id(filename)
         vector_count = vector_store.store_chunks(
@@ -321,7 +340,13 @@ async def upload_document(
         characters=len(text),
         chunk_count=len(chunks),
         vector_count=vector_count,
-        embedding_dimensions=embedding_dimensions,
+        embedding_dimensions=embeddings[0].dimensions if embeddings else embedding_dimensions,
+        embedding_provider=embeddings[0].provider if embeddings else embedding_provider,
+        embedding_model=embeddings[0].model if embeddings else _requested_embedding_model(
+            embedding_provider,
+            embedding_dimensions,
+            gemini_model,
+        ),
     )
     documents[resolved_document_id] = record
 
@@ -379,7 +404,9 @@ def query_uploaded_document(
     try:
         query_embedding = embed_texts(
             [request.query],
+            provider=record.embedding_provider,
             dimensions=record.embedding_dimensions,
+            gemini_model=record.embedding_model,
         )[0]
         search_results = vector_store.search(
             query_vector=query_embedding.values,
@@ -426,7 +453,9 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
     )
     embeddings = embed_texts(
         [chunk.text for chunk in chunks],
+        provider=request.embedding_provider,
         dimensions=request.embedding_dimensions,
+        gemini_model=request.gemini_model,
     )
     document_id = request.document_id or "api-document"
     request_vector_store = InMemoryVectorStore(collection_name=DEFAULT_COLLECTION_NAME)
@@ -437,7 +466,9 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
     )
     query_embedding = embed_texts(
         [request.query],
+        provider=request.embedding_provider,
         dimensions=request.embedding_dimensions,
+        gemini_model=request.gemini_model,
     )[0]
     search_results = request_vector_store.search(
         query_vector=query_embedding.values,
@@ -464,6 +495,17 @@ def _extract_upload_text(filename: str, content: bytes) -> str:
         return extract_file_text(file_path)
 
 
+def _requested_embedding_model(
+    provider: str,
+    dimensions: int,
+    gemini_model: str,
+) -> str:
+    if provider == "local":
+        return f"local-hash-{dimensions}"
+
+    return gemini_model
+
+
 def _new_document_id(filename: str) -> str:
     safe_stem = Path(filename).stem.lower().replace(" ", "-") or "document"
     return f"{safe_stem}-{uuid.uuid4().hex[:8]}"
@@ -486,6 +528,8 @@ def _document_record_to_response(record: DocumentRecord) -> DocumentUploadRespon
         chunk_count=record.chunk_count,
         vector_count=record.vector_count,
         embedding_dimensions=record.embedding_dimensions,
+        embedding_provider=record.embedding_provider,
+        embedding_model=record.embedding_model,
     )
 
 

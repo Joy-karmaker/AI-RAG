@@ -13,6 +13,7 @@ const elements = {
   dropZone: document.querySelector("#dropZone"),
   chunkSize: document.querySelector("#chunkSize"),
   overlap: document.querySelector("#overlap"),
+  embeddingProvider: document.querySelector("#embeddingProvider"),
   uploadButton: document.querySelector("#uploadButton"),
   refreshButton: document.querySelector("#refreshButton"),
   documentList: document.querySelector("#documentList"),
@@ -113,10 +114,16 @@ async function uploadDocument() {
     return;
   }
 
+  if (state.selectedFile.size === 0) {
+    showMessage("The selected file is empty. Choose the real PDF file, not an empty copied curl body.", "error");
+    return;
+  }
+
   const formData = new FormData();
   formData.append("file", state.selectedFile);
   formData.append("chunk_size", elements.chunkSize.value);
   formData.append("overlap", elements.overlap.value);
+  formData.append("embedding_provider", elements.embeddingProvider.value);
 
   setBusy(true);
   showMessage("Uploading...");
@@ -275,7 +282,8 @@ function renderSelectedDocument() {
   elements.selectedMeta.innerHTML = `
     <span>${selected.chunk_count} chunks</span>
     <span>${selected.vector_count} vectors</span>
-    <span>${selected.embedding_dimensions} dims</span>
+    <span>${escapeHtml(selected.embedding_provider || "local")}</span>
+    <span>${escapeHtml(selected.embedding_model || `${selected.embedding_dimensions} dims`)}</span>
   `;
 }
 
@@ -343,13 +351,46 @@ function showMessage(message, type = "") {
 async function apiFetch(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, options);
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  const contentType = response.headers.get("content-type") || "";
+  const data = parseResponseBody(text, contentType);
 
   if (!response.ok) {
-    throw new Error(data.detail || `Request failed with ${response.status}`);
+    throw new Error(formatApiError(data, response.status));
   }
 
   return data;
+}
+
+function parseResponseBody(text, contentType) {
+  if (!text) {
+    return {};
+  }
+
+  if (!contentType.includes("application/json")) {
+    return { detail: text };
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return { detail: text };
+  }
+}
+
+function formatApiError(data, status) {
+  const detail = data?.detail;
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => item.msg || JSON.stringify(item))
+      .join("; ");
+  }
+
+  if (detail) {
+    return String(detail);
+  }
+
+  return `Request failed with ${status}`;
 }
 
 function escapeHtml(value) {

@@ -193,37 +193,41 @@ def _embed_with_gemini(texts: list[str], model: str) -> list[EmbeddingResult]:
     try:
         from google import genai
         from google.genai import types
-    except ModuleNotFoundError as exc:
+    except ImportError as exc:
         raise RuntimeError(
-            "Gemini embeddings require google-genai. Install it with: "
-            "python -m pip install -r requirements.txt"
+            "Gemini embeddings require a working google-genai installation. "
+            "Install or repair dependencies with: python -m pip install -r requirements.txt. "
+            f"Import error: {exc}"
         ) from exc
 
     client = genai.Client(api_key=api_key)
     results: list[EmbeddingResult] = []
 
-    for index, text in enumerate(texts, start=1):
-        if model == "gemini-embedding-001":
-            response = client.models.embed_content(
-                model=model,
-                contents=text,
-                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
-            )
-        else:
-            response = client.models.embed_content(
-                model=model,
-                contents=f"title: none | text: {text}",
-            )
+    try:
+        for index, text in enumerate(texts, start=1):
+            if model == "gemini-embedding-001":
+                response = client.models.embed_content(
+                    model=model,
+                    contents=text,
+                    config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+                )
+            else:
+                response = client.models.embed_content(
+                    model=model,
+                    contents=f"title: none | text: {text}",
+                )
 
-        values = list(response.embeddings[0].values)
-        results.append(
-            EmbeddingResult(
-                index=index,
-                values=values,
-                provider="gemini",
-                model=model,
-                source_characters=len(text),
+            values = list(response.embeddings[0].values)
+            results.append(
+                EmbeddingResult(
+                    index=index,
+                    values=values,
+                    provider="gemini",
+                    model=model,
+                    source_characters=len(text),
+                )
             )
-        )
+    except Exception as exc:
+        raise RuntimeError(f"Gemini embedding request failed: {exc}") from exc
 
     return results

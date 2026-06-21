@@ -38,6 +38,13 @@
               <span>Overlap</span>
               <input id="overlap" type="number" min="0" step="10" value="120" />
             </label>
+            <label>
+              <span>Embedding</span>
+              <select id="embeddingProvider">
+                <option value="local">Local</option>
+                <option value="gemini">Gemini</option>
+              </select>
+            </label>
           </div>
 
           <button id="uploadButton" class="primary-button" type="button">
@@ -138,6 +145,6 @@
       </main>
     </div>
 
-    <script src="./app.js"></script>
+    <script src="./app.js?v=day14-json-fix"></script>
   </body>
 </html>

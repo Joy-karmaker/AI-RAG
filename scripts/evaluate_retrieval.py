@@ -14,7 +14,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from rag.chunking import chunk_text
-from rag.embeddings import DEFAULT_LOCAL_DIMENSIONS, embed_texts
+from rag.embeddings import DEFAULT_GEMINI_MODEL, DEFAULT_LOCAL_DIMENSIONS, embed_texts
 from rag.extractor import extract_file_text
 from rag.vector_store import InMemoryVectorStore
 
@@ -81,6 +81,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Local embedding dimensions. Default: {DEFAULT_LOCAL_DIMENSIONS}.",
     )
     parser.add_argument(
+        "--embedding-provider",
+        choices=("local", "gemini"),
+        default="local",
+        help="Embedding provider to evaluate. Default: local.",
+    )
+    parser.add_argument(
+        "--gemini-model",
+        default=DEFAULT_GEMINI_MODEL,
+        help=f"Gemini embedding model to use. Default: {DEFAULT_GEMINI_MODEL}.",
+    )
+    parser.add_argument(
         "--show-passages",
         action="store_true",
         help="Print retrieved passage previews for every question.",
@@ -100,13 +111,17 @@ def main() -> None:
             chunk_size=args.chunk_size,
             overlap=args.overlap,
             strategy=args.chunk_strategy,
+            embedding_provider=args.embedding_provider,
             embedding_dimensions=args.embedding_dimensions,
+            gemini_model=args.gemini_model,
         )
         results = evaluate_cases(
             eval_cases=eval_cases,
             vector_store=vector_store,
             top_k=args.top_k,
+            embedding_provider=args.embedding_provider,
             embedding_dimensions=args.embedding_dimensions,
+            gemini_model=args.gemini_model,
             show_passages=args.show_passages,
         )
     except (FileNotFoundError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
@@ -122,6 +137,11 @@ def main() -> None:
 
     print_header("Retrieval Evaluation")
     print(f"Chunk strategy: {args.chunk_strategy}")
+    print(f"Embedding provider: {args.embedding_provider}")
+    if args.embedding_provider == "gemini":
+        print(f"Embedding model: {args.gemini_model}")
+    else:
+        print(f"Embedding model: local-hash-{args.embedding_dimensions}")
     total = len(results)
     metric_cutoffs = recall_cutoffs(args.top_k)
     metrics = calculate_metrics(results, metric_cutoffs)
@@ -200,7 +220,9 @@ def index_documents(
     chunk_size: int,
     overlap: int,
     strategy: str,
+    embedding_provider: str,
     embedding_dimensions: int,
+    gemini_model: str,
 ) -> list[IndexedDocument]:
     indexed_documents = []
     unique_documents = sorted({case.document for case in eval_cases})
@@ -216,7 +238,9 @@ def index_documents(
         )
         embeddings = embed_texts(
             [chunk.text for chunk in chunks],
+            provider=embedding_provider,
             dimensions=embedding_dimensions,
+            gemini_model=gemini_model,
         )
         vector_count = vector_store.store_chunks(
             chunks=chunks,
@@ -239,7 +263,9 @@ def evaluate_cases(
     eval_cases: list[EvalCase],
     vector_store: InMemoryVectorStore,
     top_k: int,
+    embedding_provider: str,
     embedding_dimensions: int,
+    gemini_model: str,
     show_passages: bool,
 ) -> list[dict[str, object]]:
     results = []
@@ -247,7 +273,9 @@ def evaluate_cases(
     for case in eval_cases:
         query_embedding = embed_texts(
             [case.question],
+            provider=embedding_provider,
             dimensions=embedding_dimensions,
+            gemini_model=gemini_model,
         )[0]
         search_results = vector_store.search(
             query_vector=query_embedding.values,
