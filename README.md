@@ -614,3 +614,78 @@ Why this matters:
   collection.
 - Running the same eval set shows whether the embedding provider improved
   retrieval instead of guessing.
+
+## Day 15: Hybrid Retrieval Tuning
+
+Goal: tune how much retrieval should trust exact keyword matches versus vector
+similarity.
+
+Run the old 70/30-style hybrid baseline:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --lexical-weight 0.7 --vector-weight 0.3
+```
+
+Compare balanced and vector-heavy retrieval:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --lexical-weight 0.5 --vector-weight 0.5
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --lexical-weight 0.3 --vector-weight 0.7
+```
+
+Use automatic query-type tuning:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --query-mode auto
+```
+
+Inspect lexical and vector score components:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --query-mode auto --show-passages
+```
+
+API query requests can also pass hybrid settings:
+
+```json
+{
+  "query": "What frameworks and libraries are listed?",
+  "top_k": 3,
+  "query_mode": "auto"
+}
+```
+
+Or manual weights:
+
+```json
+{
+  "query": "Why do chunks overlap?",
+  "top_k": 3,
+  "lexical_weight": 0.35,
+  "vector_weight": 0.65
+}
+```
+
+Query modes:
+
+- `auto`: classify the query and choose weights automatically.
+- `exact_keyword`: stronger lexical scoring for exact names and symbols.
+- `section_lookup`: stronger lexical scoring for sections like skills or education.
+- `semantic_explanation`: stronger vector scoring for why/how/explain questions.
+- `summary`: slightly vector-heavy for overview questions.
+- `balanced`: equal lexical and vector weight.
+
+Current local results with paragraph chunking:
+
+| Hybrid setting | Recall@1 | Recall@3 | Recall@5 | MRR@5 |
+| :--- | ---: | ---: | ---: | ---: |
+| 70% lexical / 30% vector | 70% | 90% | 100% | 0.8250 |
+| 50% lexical / 50% vector | 70% | 90% | 90% | 0.8000 |
+| 30% lexical / 70% vector | 70% | 90% | 90% | 0.8000 |
+| auto query mode | 70% | 100% | 100% | 0.8500 |
+
+Why this matters:
+
+- Exact terms like `Laravel`, `React.js`, `Docker`, or `MicroFin360NEXT` need lexical strength.
+- Conceptual questions like "Why do chunks overlap?" benefit from vector similarity.
+- Query-type tuning lets the retriever adapt instead of using one fixed score mix for every question.

@@ -10,8 +10,15 @@ from rag.embeddings import EmbeddingResult, tokenize_for_local_search
 
 
 DEFAULT_COLLECTION_NAME = "ai_rag_chunks"
-HYBRID_LEXICAL_WEIGHT = 0.7
-HYBRID_VECTOR_WEIGHT = 0.3
+DEFAULT_HYBRID_LEXICAL_WEIGHT = 0.7
+DEFAULT_HYBRID_VECTOR_WEIGHT = 0.3
+HYBRID_WEIGHT_PRESETS = {
+    "balanced": (0.5, 0.5),
+    "exact_keyword": (0.8, 0.2),
+    "section_lookup": (0.75, 0.25),
+    "semantic_explanation": (0.35, 0.65),
+    "summary": (0.45, 0.55),
+}
 
 
 @dataclass(frozen=True)
@@ -33,7 +40,9 @@ class SearchResult:
     text_preview: str
     page: int | None = None
     section_title: str | None = None
-
+    vector_score: float | None = None
+    lexical_score: float | None = None
+    query_type: str | None = None
 
 class InMemoryVectorStore:
     """Small Qdrant wrapper for vector storage and search."""
@@ -169,6 +178,9 @@ class InMemoryVectorStore:
         document_id: str | None = None,
         query_text: str | None = None,
         hybrid: bool = True,
+        lexical_weight: float | None = None,
+        vector_weight: float | None = None,
+        query_mode: str = "auto",
     ) -> list[SearchResult]:
         """Find stored chunks with vector search, optionally reranked by local text search."""
         if limit <= 0:
@@ -196,6 +208,9 @@ class InMemoryVectorStore:
             vector_points=response.points,
             records=records,
             limit=limit,
+            lexical_weight=lexical_weight,
+            vector_weight=vector_weight,
+            query_mode=query_mode,
         )
 
     def _scroll_records(self, document_id: str | None):
@@ -278,6 +293,9 @@ def _build_hybrid_search_results(
     vector_points,
     records,
     limit: int,
+    lexical_weight: float | None,
+    vector_weight: float | None,
+    query_mode: str,
 ) -> list[SearchResult]:
     record_by_id = {_point_key(record.id): record for record in records}
     vector_scores = {
@@ -286,6 +304,12 @@ def _build_hybrid_search_results(
     }
     lexical_scores = _lexical_scores(query_text, records)
 
+    query_type = classify_query_type(query_text) if query_mode == "auto" else query_mode
+    resolved_lexical_weight, resolved_vector_weight = _resolve_hybrid_weights(
+        query_type=query_type,
+        lexical_weight=lexical_weight,
+        vector_weight=vector_weight,
+    )
     normalized_vectors = _normalize_score_map(vector_scores)
     normalized_lexical = _normalize_score_map(lexical_scores)
     candidate_ids = set(normalized_vectors) | {
@@ -305,15 +329,19 @@ def _build_hybrid_search_results(
             continue
 
         payload = record.payload or {}
+        lexical_score = normalized_lexical.get(point_id, 0.0)
+        vector_score = normalized_vectors.get(point_id, 0.0)
         score = (
-            HYBRID_LEXICAL_WEIGHT * normalized_lexical.get(point_id, 0.0)
-            + HYBRID_VECTOR_WEIGHT * normalized_vectors.get(point_id, 0.0)
+            resolved_lexical_weight * lexical_score
+            + resolved_vector_weight * vector_score
         )
         ranked_candidates.append(
             (
                 score,
                 int(payload.get("chunk_index", 0)),
                 record,
+                vector_score,
+                lexical_score,
             )
         )
 
@@ -328,10 +356,82 @@ def _build_hybrid_search_results(
         ranked_candidates = positive_candidates
 
     return [
-        _payload_to_search_result(record.id, record.payload or {}, score)
-        for score, _, record in ranked_candidates[:limit]
+        _payload_to_search_result(
+            record.id,
+            record.payload or {},
+            score,
+            vector_score=vector_score,
+            lexical_score=lexical_score,
+            query_type=query_type,
+        )
+        for score, _, record, vector_score, lexical_score in ranked_candidates[:limit]
     ]
 
+
+def classify_query_type(query_text: str) -> str:
+    query_terms = set(tokenize_for_local_search(query_text))
+    lowered_query = query_text.lower()
+
+    section_terms = {
+        "framework",
+        "library",
+        "database",
+        "tool",
+        "skill",
+        "education",
+        "experience",
+        "project",
+        "company",
+    }
+    explanation_terms = {"why", "how", "explain", "reason", "meaning", "purpose"}
+    summary_terms = {"summary", "summarize", "overview", "brief"}
+
+    if query_terms & summary_terms:
+        return "summary"
+
+    if query_terms & section_terms:
+        return "section_lookup"
+
+    if any(term in lowered_query for term in explanation_terms):
+        return "semantic_explanation"
+
+    if any(character.isupper() for character in query_text) or any(
+        separator in lowered_query
+        for separator in ("/", "+", ".js", "360", "ci/cd")
+    ):
+        return "exact_keyword"
+
+    return "balanced"
+
+
+def _resolve_hybrid_weights(
+    query_type: str,
+    lexical_weight: float | None,
+    vector_weight: float | None,
+) -> tuple[float, float]:
+    if lexical_weight is not None or vector_weight is not None:
+        left = DEFAULT_HYBRID_LEXICAL_WEIGHT if lexical_weight is None else lexical_weight
+        right = DEFAULT_HYBRID_VECTOR_WEIGHT if vector_weight is None else vector_weight
+        return _normalize_hybrid_weights(left, right)
+
+    return HYBRID_WEIGHT_PRESETS.get(
+        query_type,
+        (DEFAULT_HYBRID_LEXICAL_WEIGHT, DEFAULT_HYBRID_VECTOR_WEIGHT),
+    )
+
+
+def _normalize_hybrid_weights(
+    lexical_weight: float,
+    vector_weight: float,
+) -> tuple[float, float]:
+    if lexical_weight < 0 or vector_weight < 0:
+        raise ValueError("hybrid weights cannot be negative.")
+
+    total = lexical_weight + vector_weight
+    if total <= 0:
+        raise ValueError("at least one hybrid weight must be greater than 0.")
+
+    return lexical_weight / total, vector_weight / total
 
 def _lexical_scores(query_text: str, records) -> dict[str, float]:
     query_terms = list(dict.fromkeys(tokenize_for_local_search(query_text)))
@@ -481,7 +581,14 @@ def _normalize_score_map(scores: dict[str, float]) -> dict[str, float]:
     }
 
 
-def _payload_to_search_result(point_id, payload: dict, score: float) -> SearchResult:
+def _payload_to_search_result(
+    point_id,
+    payload: dict,
+    score: float,
+    vector_score: float | None = None,
+    lexical_score: float | None = None,
+    query_type: str | None = None,
+) -> SearchResult:
     text = str(payload.get("text", ""))
     page = payload.get("page")
 
@@ -496,6 +603,9 @@ def _payload_to_search_result(point_id, payload: dict, score: float) -> SearchRe
         text_preview=_preview_text(text),
         page=int(page) if page is not None else None,
         section_title=payload.get("section_title"),
+        vector_score=vector_score,
+        lexical_score=lexical_score,
+        query_type=query_type,
     )
 
 

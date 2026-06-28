@@ -95,6 +95,9 @@ class SearchRequest(BaseModel):
     embedding_dimensions: int = Field(default=DEFAULT_LOCAL_DIMENSIONS, gt=0)
     embedding_provider: str = "local"
     gemini_model: str = DEFAULT_GEMINI_MODEL
+    lexical_weight: Optional[float] = None
+    vector_weight: Optional[float] = None
+    query_mode: str = "auto"
     document_id: Optional[str] = None
 
 
@@ -108,6 +111,9 @@ class SearchResultPayload(BaseModel):
     text_preview: str
     page: Optional[int] = None
     section_title: Optional[str] = None
+    vector_score: Optional[float] = None
+    lexical_score: Optional[float] = None
+    query_type: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -151,6 +157,9 @@ class DocumentQueryRequest(BaseModel):
     dry_run_answer: bool = False
     llm_model: str = DEFAULT_LLM_MODEL
     temperature: float = 0.2
+    lexical_weight: Optional[float] = None
+    vector_weight: Optional[float] = None
+    query_mode: str = "auto"
 
 
 class DocumentQueryResponse(BaseModel):
@@ -413,6 +422,9 @@ def query_uploaded_document(
             limit=request.top_k,
             document_id=document_id,
             query_text=request.query,
+            lexical_weight=request.lexical_weight,
+            vector_weight=request.vector_weight,
+            query_mode=request.query_mode,
         )
 
         prompt = None
@@ -474,6 +486,9 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
         query_vector=query_embedding.values,
         limit=request.top_k,
         query_text=request.query,
+        lexical_weight=request.lexical_weight,
+        vector_weight=request.vector_weight,
+        query_mode=request.query_mode,
     )
 
     return (
@@ -545,6 +560,9 @@ def _search_results_to_payload(search_results: list) -> list[SearchResultPayload
             text_preview=result.text_preview,
             page=result.page,
             section_title=result.section_title,
+            vector_score=result.vector_score,
+            lexical_score=result.lexical_score,
+            query_type=result.query_type,
         )
         for rank, result in enumerate(search_results, start=1)
     ]

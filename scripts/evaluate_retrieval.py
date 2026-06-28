@@ -16,7 +16,7 @@ if str(BACKEND_DIR) not in sys.path:
 from rag.chunking import chunk_text
 from rag.embeddings import DEFAULT_GEMINI_MODEL, DEFAULT_LOCAL_DIMENSIONS, embed_texts
 from rag.extractor import extract_file_text
-from rag.vector_store import InMemoryVectorStore
+from rag.vector_store import HYBRID_WEIGHT_PRESETS, InMemoryVectorStore
 
 
 DEFAULT_EVAL_FILE = PROJECT_ROOT / "eval" / "eval_questions.json"
@@ -92,6 +92,24 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Gemini embedding model to use. Default: {DEFAULT_GEMINI_MODEL}.",
     )
     parser.add_argument(
+        "--lexical-weight",
+        type=float,
+        default=None,
+        help="Hybrid lexical score weight. Default: auto by query type.",
+    )
+    parser.add_argument(
+        "--vector-weight",
+        type=float,
+        default=None,
+        help="Hybrid vector score weight. Default: auto by query type.",
+    )
+    parser.add_argument(
+        "--query-mode",
+        choices=("auto", *HYBRID_WEIGHT_PRESETS.keys()),
+        default="auto",
+        help="Hybrid query mode preset. Default: auto.",
+    )
+    parser.add_argument(
         "--show-passages",
         action="store_true",
         help="Print retrieved passage previews for every question.",
@@ -122,6 +140,9 @@ def main() -> None:
             embedding_provider=args.embedding_provider,
             embedding_dimensions=args.embedding_dimensions,
             gemini_model=args.gemini_model,
+            lexical_weight=args.lexical_weight,
+            vector_weight=args.vector_weight,
+            query_mode=args.query_mode,
             show_passages=args.show_passages,
         )
     except (FileNotFoundError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
@@ -142,6 +163,12 @@ def main() -> None:
         print(f"Embedding model: {args.gemini_model}")
     else:
         print(f"Embedding model: local-hash-{args.embedding_dimensions}")
+    print(f"Hybrid query mode: {args.query_mode}")
+    print(
+        "Hybrid weights: "
+        f"lexical={args.lexical_weight if args.lexical_weight is not None else 'auto'}, "
+        f"vector={args.vector_weight if args.vector_weight is not None else 'auto'}"
+    )
     total = len(results)
     metric_cutoffs = recall_cutoffs(args.top_k)
     metrics = calculate_metrics(results, metric_cutoffs)
@@ -266,6 +293,9 @@ def evaluate_cases(
     embedding_provider: str,
     embedding_dimensions: int,
     gemini_model: str,
+    lexical_weight: float | None,
+    vector_weight: float | None,
+    query_mode: str,
     show_passages: bool,
 ) -> list[dict[str, object]]:
     results = []
@@ -282,6 +312,9 @@ def evaluate_cases(
             limit=top_k,
             document_id=document_to_id(case.document),
             query_text=case.question,
+            lexical_weight=lexical_weight,
+            vector_weight=vector_weight,
+            query_mode=query_mode,
         )
         rank = first_matching_rank(search_results, case.expected_source_terms)
         results.append(
@@ -302,7 +335,11 @@ def evaluate_cases(
                     f"{result_rank}. chunk={result.chunk_index} "
                     f"page={result.page or '-'} "
                     f"section={result.section_title or '-'} "
-                    f"score={result.score:.4f} preview={result.text_preview}"
+                    f"score={result.score:.4f} "
+                    f"lexical={result.lexical_score if result.lexical_score is not None else '-'} "
+                    f"vector={result.vector_score if result.vector_score is not None else '-'} "
+                    f"query_type={result.query_type or '-'} "
+                    f"preview={result.text_preview}"
                 )
 
     return results
