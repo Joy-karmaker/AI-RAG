@@ -689,3 +689,62 @@ Why this matters:
 - Exact terms like `Laravel`, `React.js`, `Docker`, or `MicroFin360NEXT` need lexical strength.
 - Conceptual questions like "Why do chunks overlap?" benefit from vector similarity.
 - Query-type tuning lets the retriever adapt instead of using one fixed score mix for every question.
+## Day 16: Reranking
+
+Goal: retrieve a wider candidate set first, then rerank those candidates so the
+answer model receives cleaner context.
+
+Run the Day 15 baseline:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --query-mode auto
+```
+
+Run the Day 16 reranked pipeline:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --query-mode auto --reranker local --retrieval-k 20
+```
+
+Run the answer-context version that keeps only the best 3 chunks:
+
+```powershell
+python -B scripts/evaluate_retrieval.py --chunk-strategy paragraph --query-mode auto --top-k 3 --reranker local --retrieval-k 20
+```
+
+API query requests can also enable reranking:
+
+```json
+{
+  "query": "Why should chunks overlap?",
+  "top_k": 3,
+  "reranker": "local",
+  "retrieval_k": 20,
+  "query_mode": "auto"
+}
+```
+
+What changed:
+
+- The API now retrieves a broader candidate set when reranking is enabled.
+- `rag.reranker` adds a local reranker using hybrid score, term coverage,
+  phrase overlap, section/title overlap, lexical score, and vector score.
+- Search results now expose `rerank_score` and `rerank_strategy`.
+- The evaluator supports `--reranker none|local` and `--retrieval-k`.
+- The browser source cards show local rerank scores when reranking is used.
+
+Current local results with paragraph chunking and auto hybrid retrieval:
+
+| Pipeline | Retrieval candidates | Kept chunks | Recall@1 | Recall@3 | Recall@5 | MRR |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Day 15 hybrid only | 5 | 5 | 70% | 100% | 100% | 0.8500 |
+| Day 16 local reranker | 20 | 5 | 70% | 100% | 100% | 0.8500 |
+| Day 16 local reranker | 20 | 3 | 70% | 100% | - | 0.8500 |
+
+Why this matters:
+
+- Retrieval focuses on recall: find enough possible evidence.
+- Reranking focuses on precision: reorder the candidates before answering.
+- Sending fewer, cleaner chunks reduces noise in the prompt.
+- Rerank scores make failures easier to inspect before adding a stronger model
+  reranker such as BGE, Cohere, Gemini, or a cross-encoder.

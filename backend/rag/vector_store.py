@@ -43,6 +43,9 @@ class SearchResult:
     vector_score: float | None = None
     lexical_score: float | None = None
     query_type: str | None = None
+    rerank_score: float | None = None
+    rerank_strategy: str | None = None
+
 
 class InMemoryVectorStore:
     """Small Qdrant wrapper for vector storage and search."""
@@ -432,6 +435,7 @@ def _normalize_hybrid_weights(
         raise ValueError("at least one hybrid weight must be greater than 0.")
 
     return lexical_weight / total, vector_weight / total
+
 
 def _lexical_scores(query_text: str, records) -> dict[str, float]:
     query_terms = list(dict.fromkeys(tokenize_for_local_search(query_text)))

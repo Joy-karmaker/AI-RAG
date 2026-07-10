@@ -16,6 +16,7 @@ if str(BACKEND_DIR) not in sys.path:
 from rag.chunking import chunk_text
 from rag.embeddings import DEFAULT_GEMINI_MODEL, DEFAULT_LOCAL_DIMENSIONS, embed_texts
 from rag.extractor import extract_file_text
+from rag.reranker import RERANKER_STRATEGIES, rerank_results
 from rag.vector_store import HYBRID_WEIGHT_PRESETS, InMemoryVectorStore
 
 
@@ -110,6 +111,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Hybrid query mode preset. Default: auto.",
     )
     parser.add_argument(
+        "--reranker",
+        choices=RERANKER_STRATEGIES,
+        default="none",
+        help="Reranker to apply after broad retrieval. Default: none.",
+    )
+    parser.add_argument(
+        "--retrieval-k",
+        type=int,
+        default=None,
+        help="Candidate count before reranking. Default: max(top-k * 4, top-k).",
+    )
+    parser.add_argument(
         "--show-passages",
         action="store_true",
         help="Print retrieved passage previews for every question.",
@@ -143,6 +156,8 @@ def main() -> None:
             lexical_weight=args.lexical_weight,
             vector_weight=args.vector_weight,
             query_mode=args.query_mode,
+            reranker=args.reranker,
+            retrieval_k=args.retrieval_k,
             show_passages=args.show_passages,
         )
     except (FileNotFoundError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
@@ -169,6 +184,9 @@ def main() -> None:
         f"lexical={args.lexical_weight if args.lexical_weight is not None else 'auto'}, "
         f"vector={args.vector_weight if args.vector_weight is not None else 'auto'}"
     )
+    print(f"Reranker: {args.reranker}")
+    if args.reranker != "none":
+        print(f"Retrieval candidates: {args.retrieval_k or max(args.top_k * 4, args.top_k)}")
     total = len(results)
     metric_cutoffs = recall_cutoffs(args.top_k)
     metrics = calculate_metrics(results, metric_cutoffs)
@@ -296,6 +314,8 @@ def evaluate_cases(
     lexical_weight: float | None,
     vector_weight: float | None,
     query_mode: str,
+    reranker: str,
+    retrieval_k: int | None,
     show_passages: bool,
 ) -> list[dict[str, object]]:
     results = []
@@ -307,14 +327,24 @@ def evaluate_cases(
             dimensions=embedding_dimensions,
             gemini_model=gemini_model,
         )[0]
+        candidate_limit = retrieval_k or (
+            max(top_k * 4, top_k) if reranker != "none" else top_k
+        )
+        candidate_limit = max(candidate_limit, top_k)
         search_results = vector_store.search(
             query_vector=query_embedding.values,
-            limit=top_k,
+            limit=candidate_limit,
             document_id=document_to_id(case.document),
             query_text=case.question,
             lexical_weight=lexical_weight,
             vector_weight=vector_weight,
             query_mode=query_mode,
+        )
+        search_results = rerank_results(
+            query_text=case.question,
+            results=search_results,
+            limit=top_k,
+            strategy=reranker,
         )
         rank = first_matching_rank(search_results, case.expected_source_terms)
         results.append(
@@ -339,6 +369,8 @@ def evaluate_cases(
                     f"lexical={result.lexical_score if result.lexical_score is not None else '-'} "
                     f"vector={result.vector_score if result.vector_score is not None else '-'} "
                     f"query_type={result.query_type or '-'} "
+                    f"rerank={result.rerank_score if result.rerank_score is not None else '-'} "
+                    f"reranker={result.rerank_strategy or '-'} "
                     f"preview={result.text_preview}"
                 )
 

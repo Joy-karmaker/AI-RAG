@@ -17,6 +17,7 @@ from rag.embeddings import DEFAULT_GEMINI_MODEL, DEFAULT_LOCAL_DIMENSIONS, embed
 from rag.extractor import extract_file_text
 from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
 from rag.prompt import build_grounded_prompt
+from rag.reranker import rerank_results
 from rag.vector_store import DEFAULT_COLLECTION_NAME, InMemoryVectorStore
 
 
@@ -98,6 +99,8 @@ class SearchRequest(BaseModel):
     lexical_weight: Optional[float] = None
     vector_weight: Optional[float] = None
     query_mode: str = "auto"
+    reranker: str = "local"
+    retrieval_k: Optional[int] = Field(default=None, gt=0)
     document_id: Optional[str] = None
 
 
@@ -114,6 +117,8 @@ class SearchResultPayload(BaseModel):
     vector_score: Optional[float] = None
     lexical_score: Optional[float] = None
     query_type: Optional[str] = None
+    rerank_score: Optional[float] = None
+    rerank_strategy: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -160,6 +165,8 @@ class DocumentQueryRequest(BaseModel):
     lexical_weight: Optional[float] = None
     vector_weight: Optional[float] = None
     query_mode: str = "auto"
+    reranker: str = "local"
+    retrieval_k: Optional[int] = Field(default=None, gt=0)
 
 
 class DocumentQueryResponse(BaseModel):
@@ -417,14 +424,17 @@ def query_uploaded_document(
             dimensions=record.embedding_dimensions,
             gemini_model=record.embedding_model,
         )[0]
-        search_results = vector_store.search(
+        search_results = _retrieve_then_rerank(
+            store=vector_store,
             query_vector=query_embedding.values,
-            limit=request.top_k,
+            top_k=request.top_k,
             document_id=document_id,
             query_text=request.query,
             lexical_weight=request.lexical_weight,
             vector_weight=request.vector_weight,
             query_mode=request.query_mode,
+            reranker=request.reranker,
+            retrieval_k=request.retrieval_k,
         )
 
         prompt = None
@@ -482,13 +492,16 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
         dimensions=request.embedding_dimensions,
         gemini_model=request.gemini_model,
     )[0]
-    search_results = request_vector_store.search(
+    search_results = _retrieve_then_rerank(
+        store=request_vector_store,
         query_vector=query_embedding.values,
-        limit=request.top_k,
+        top_k=request.top_k,
         query_text=request.query,
         lexical_weight=request.lexical_weight,
         vector_weight=request.vector_weight,
         query_mode=request.query_mode,
+        reranker=request.reranker,
+        retrieval_k=request.retrieval_k,
     )
 
     return (
@@ -500,6 +513,39 @@ def _run_search_pipeline(request: SearchRequest) -> tuple[SearchResponse, list]:
             results=_search_results_to_payload(search_results),
         ),
         search_results,
+    )
+
+
+def _retrieve_then_rerank(
+    store: InMemoryVectorStore,
+    query_vector: list[float],
+    top_k: int,
+    query_text: str,
+    document_id: Optional[str] = None,
+    lexical_weight: Optional[float] = None,
+    vector_weight: Optional[float] = None,
+    query_mode: str = "auto",
+    reranker: str = "local",
+    retrieval_k: Optional[int] = None,
+):
+    candidate_limit = retrieval_k or (
+        max(top_k * 4, top_k) if reranker != "none" else top_k
+    )
+    candidate_limit = max(candidate_limit, top_k)
+    candidates = store.search(
+        query_vector=query_vector,
+        limit=candidate_limit,
+        document_id=document_id,
+        query_text=query_text,
+        lexical_weight=lexical_weight,
+        vector_weight=vector_weight,
+        query_mode=query_mode,
+    )
+    return rerank_results(
+        query_text=query_text,
+        results=candidates,
+        limit=top_k,
+        strategy=reranker,
     )
 
 
@@ -563,6 +609,8 @@ def _search_results_to_payload(search_results: list) -> list[SearchResultPayload
             vector_score=result.vector_score,
             lexical_score=result.lexical_score,
             query_type=result.query_type,
+            rerank_score=result.rerank_score,
+            rerank_strategy=result.rerank_strategy,
         )
         for rank, result in enumerate(search_results, start=1)
     ]

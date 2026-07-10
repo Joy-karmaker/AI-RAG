@@ -307,10 +307,13 @@ function renderSources(results) {
   for (const result of results) {
     const article = document.createElement("article");
     article.className = "source-card";
+    const scoreLabel = result.rerank_strategy
+      ? `${result.rerank_strategy} ${Number(result.rerank_score ?? result.score).toFixed(4)}`
+      : Number(result.score).toFixed(4);
     article.innerHTML = `
       <header>
         <span>Chunk ${result.chunk_index}</span>
-        <span>${Number(result.score).toFixed(4)}</span>
+        <span>${escapeHtml(scoreLabel)}</span>
       </header>
       <pre class="source-full-text">${escapeHtml(result.text || result.text_preview || "")}</pre>
     `;
