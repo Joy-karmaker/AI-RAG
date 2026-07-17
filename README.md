@@ -689,6 +689,7 @@ Why this matters:
 - Exact terms like `Laravel`, `React.js`, `Docker`, or `MicroFin360NEXT` need lexical strength.
 - Conceptual questions like "Why do chunks overlap?" benefit from vector similarity.
 - Query-type tuning lets the retriever adapt instead of using one fixed score mix for every question.
+
 ## Day 16: Reranking
 
 Goal: retrieve a wider candidate set first, then rerank those candidates so the
@@ -748,3 +749,59 @@ Why this matters:
 - Sending fewer, cleaner chunks reduces noise in the prompt.
 - Rerank scores make failures easier to inspect before adding a stronger model
   reranker such as BGE, Cohere, Gemini, or a cross-encoder.
+
+## Day 17: Grounded Answer Verification
+
+Goal: check whether a generated answer is supported by the retrieved chunks.
+
+The answer path now has one more step:
+
+```text
+query -> retrieve -> rerank -> generate answer -> verify answer
+```
+
+Ask for an answer through the API:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/documents/<document_id>/query `
+  -ContentType "application/json" `
+  -Body '{"query":"Why should chunks overlap?","top_k":3,"answer":true,"reranker":"local","retrieval_k":20}'
+```
+
+The response now includes a verification object:
+
+```json
+{
+  "verification_status": "supported",
+  "supported": true,
+  "answer_coverage": 0.92,
+  "evidence_score": 0.95,
+  "cited_chunks": [3],
+  "supporting_chunks": [3, 4],
+  "missing_citations": [],
+  "notes": "Answer terms are well covered by retrieved context and citations are valid."
+}
+```
+
+Verification statuses:
+
+- `supported`: answer is well covered by retrieved context and cites valid chunks.
+- `partially_supported`: some evidence exists, but support or citation quality is weak.
+- `unsupported`: answer contains details not well supported by retrieved context.
+- `insufficient_context`: answer correctly says the provided context is not enough.
+
+What changed:
+
+- Added `rag.verification` with a deterministic local verifier.
+- API answer responses now include `verification` details.
+- CLI answers now print a verification section after Gemini output.
+- The browser answer panel shows verification status and notes.
+
+Why this matters:
+
+- RAG can still produce unsupported answers.
+- Verification separates "sounds right" from "supported by retrieved evidence".
+- Citation checks catch answers that refer to chunks that were not actually used.
+- A conservative verifier is useful because weak support should be visible, not hidden.

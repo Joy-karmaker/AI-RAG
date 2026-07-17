@@ -15,6 +15,7 @@ from rag.embeddings import (
 from rag.extractor import extract_file_text
 from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
 from rag.prompt import build_grounded_prompt
+from rag.verification import verify_grounded_answer
 from rag.vector_store import DEFAULT_COLLECTION_NAME, InMemoryVectorStore
 
 
@@ -146,6 +147,7 @@ def main() -> None:
         query_embedding = None
         grounded_answer = None
         grounded_prompt = None
+        verification = None
 
         if (args.answer or args.dry_run_answer) and not args.query:
             raise ValueError("--answer and --dry-run-answer require --query.")
@@ -200,6 +202,11 @@ def main() -> None:
                         search_results=search_results,
                         model=args.llm_model,
                         temperature=args.temperature,
+                    )
+                    verification = verify_grounded_answer(
+                        args.query,
+                        grounded_answer.answer,
+                        search_results,
                     )
     except (FileNotFoundError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -283,6 +290,18 @@ def main() -> None:
         print()
         print(grounded_answer.answer)
 
+        if verification:
+            print("\n=== Verification ===")
+            print(f"Status: {verification.verification_status}")
+            print(f"Supported: {verification.supported}")
+            print(f"Answer coverage: {verification.answer_coverage:.2%}")
+            print(f"Evidence score: {verification.evidence_score:.4f}")
+            print(f"Cited chunks: {verification.cited_chunks or '-'}")
+            print(f"Supporting chunks: {verification.supporting_chunks or '-'}")
+            if verification.missing_citations:
+                print(f"Missing citations: {verification.missing_citations}")
+            print(f"Notes: {verification.notes}")
+
     print("\n=== Summary ===")
     print(f"Characters extracted: {len(text)}")
     print(f"Chunks created: {len(chunks)}")
@@ -298,6 +317,8 @@ def main() -> None:
         print(f"Search results: {len(search_results)}")
     if args.answer and grounded_answer:
         print("Gemini answer generated: yes")
+    if args.answer and verification:
+        print(f"Verification status: {verification.verification_status}")
 
 
 if __name__ == "__main__":

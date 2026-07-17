@@ -185,8 +185,8 @@ async function queryDocument({ promptOnly }) {
       elements.answerModel.textContent = "";
     } else {
       elements.promptPanel.classList.add("hidden");
-      renderAnswer(data.answer || summarizeResults(data.results || []));
-      elements.answerModel.textContent = data.answer_model || "retrieval";
+      renderAnswer(data.answer || summarizeResults(data.results || []), data.verification);
+      elements.answerModel.textContent = formatAnswerModel(data.answer_model, data.verification);
     }
 
     showMessage("Query complete.", "success");
@@ -287,9 +287,30 @@ function renderSelectedDocument() {
   `;
 }
 
-function renderAnswer(text) {
+function renderAnswer(text, verification = null) {
   elements.answerBox.classList.remove("empty-state");
-  elements.answerBox.textContent = text;
+
+  if (!verification) {
+    elements.answerBox.textContent = text;
+    return;
+  }
+
+  elements.answerBox.textContent = [
+    `Verification: ${verification.verification_status}`,
+    verification.notes ? `Notes: ${verification.notes}` : "",
+    "",
+    text,
+  ].filter(Boolean).join("\n");
+}
+
+function formatAnswerModel(model, verification) {
+  const label = model || "retrieval";
+
+  if (!verification) {
+    return label;
+  }
+
+  return `${label} | ${verification.verification_status}`;
 }
 
 function renderSources(results) {

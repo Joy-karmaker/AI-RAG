@@ -18,6 +18,7 @@ from rag.extractor import extract_file_text
 from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
 from rag.prompt import build_grounded_prompt
 from rag.reranker import rerank_results
+from rag.verification import VerificationResult, verify_grounded_answer
 from rag.vector_store import DEFAULT_COLLECTION_NAME, InMemoryVectorStore
 
 
@@ -169,6 +170,17 @@ class DocumentQueryRequest(BaseModel):
     retrieval_k: Optional[int] = Field(default=None, gt=0)
 
 
+class VerificationPayload(BaseModel):
+    verification_status: str
+    supported: bool
+    answer_coverage: float
+    evidence_score: float
+    cited_chunks: list[int]
+    supporting_chunks: list[int]
+    missing_citations: list[int]
+    notes: str
+
+
 class DocumentQueryResponse(BaseModel):
     document_id: str
     filename: str
@@ -177,6 +189,7 @@ class DocumentQueryResponse(BaseModel):
     answer: Optional[str] = None
     answer_model: Optional[str] = None
     prompt: Optional[str] = None
+    verification: Optional[VerificationPayload] = None
 
 
 @app.get("/")
@@ -440,6 +453,7 @@ def query_uploaded_document(
         prompt = None
         answer = None
         answer_model = None
+        verification = None
 
         if request.dry_run_answer:
             prompt = build_grounded_prompt(request.query, search_results)
@@ -452,6 +466,9 @@ def query_uploaded_document(
             )
             answer = grounded_answer.answer
             answer_model = grounded_answer.model
+            verification = _verification_to_payload(
+                verify_grounded_answer(request.query, answer, search_results)
+            )
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -463,6 +480,7 @@ def query_uploaded_document(
         answer=answer,
         answer_model=answer_model,
         prompt=prompt,
+        verification=verification,
     )
 
 
@@ -593,6 +611,19 @@ def _document_record_to_response(record: DocumentRecord) -> DocumentUploadRespon
         embedding_model=record.embedding_model,
     )
 
+def _verification_to_payload(
+    verification: VerificationResult,
+) -> VerificationPayload:
+    return VerificationPayload(
+        verification_status=verification.verification_status,
+        supported=verification.supported,
+        answer_coverage=verification.answer_coverage,
+        evidence_score=verification.evidence_score,
+        cited_chunks=verification.cited_chunks,
+        supporting_chunks=verification.supporting_chunks,
+        missing_citations=verification.missing_citations,
+        notes=verification.notes,
+    )
 
 def _search_results_to_payload(search_results: list) -> list[SearchResultPayload]:
     return [
