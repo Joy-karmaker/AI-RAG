@@ -102,6 +102,12 @@
               <b>Gemini</b>
             </label>
 
+            <label class="switch-field">
+              <input id="debugToggle" type="checkbox" />
+              <span></span>
+              <b>Debug</b>
+            </label>
+
             <button id="askButton" class="primary-button" type="button">
               Ask
             </button>
@@ -141,10 +147,20 @@
           <pre id="promptBox"></pre>
         </section>
 
+        <section id="debugPanel" class="prompt-panel debug-panel hidden">
+          <div class="section-header">
+            <h2>Debug Trace</h2>
+            <button id="clearDebugButton" class="icon-button" type="button" title="Close">
+              Close
+            </button>
+          </div>
+          <pre id="debugBox"></pre>
+        </section>
+
         <div id="messageBar" class="message-bar" role="status"></div>
       </main>
     </div>
 
-    <script src="./app.js?v=day17-verify"></script>
+    <script src="./app.js?v=day18-observability"></script>
   </body>
 </html>

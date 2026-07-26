@@ -23,6 +23,7 @@ const elements = {
   topK: document.querySelector("#topK"),
   modelSelect: document.querySelector("#modelSelect"),
   answerToggle: document.querySelector("#answerToggle"),
+  debugToggle: document.querySelector("#debugToggle"),
   askButton: document.querySelector("#askButton"),
   promptButton: document.querySelector("#promptButton"),
   answerBox: document.querySelector("#answerBox"),
@@ -32,6 +33,9 @@ const elements = {
   promptPanel: document.querySelector("#promptPanel"),
   promptBox: document.querySelector("#promptBox"),
   clearPromptButton: document.querySelector("#clearPromptButton"),
+  debugPanel: document.querySelector("#debugPanel"),
+  debugBox: document.querySelector("#debugBox"),
+  clearDebugButton: document.querySelector("#clearDebugButton"),
   messageBar: document.querySelector("#messageBar"),
 };
 
@@ -71,6 +75,7 @@ function bindEvents() {
     elements.promptPanel.classList.add("hidden");
     elements.promptBox.textContent = "";
   });
+  elements.clearDebugButton.addEventListener("click", clearDebugPanel);
 }
 
 async function checkApi() {
@@ -163,12 +168,14 @@ async function queryDocument({ promptOnly }) {
   showMessage(promptOnly ? "Building prompt..." : "Searching...");
 
   try {
+    const debug = elements.debugToggle.checked;
     const payload = {
       query,
       top_k: Number(elements.topK.value),
       answer: !promptOnly && elements.answerToggle.checked,
       dry_run_answer: promptOnly,
       llm_model: elements.modelSelect.value,
+      debug,
     };
     const data = await apiFetch(`/documents/${selected.document_id}/query`, {
       method: "POST",
@@ -188,6 +195,8 @@ async function queryDocument({ promptOnly }) {
       renderAnswer(data.answer || summarizeResults(data.results || []), data.verification);
       elements.answerModel.textContent = formatAnswerModel(data.answer_model, data.verification);
     }
+
+    renderDebug(debug ? data.trace : null);
 
     showMessage("Query complete.", "success");
   } catch (error) {
@@ -258,6 +267,7 @@ async function deleteDocument(documentId) {
       elements.answerModel.textContent = "";
       elements.promptPanel.classList.add("hidden");
       elements.promptBox.textContent = "";
+      clearDebugPanel();
     }
 
     await refreshDocuments();
@@ -301,6 +311,89 @@ function renderAnswer(text, verification = null) {
     "",
     text,
   ].filter(Boolean).join("\n");
+}
+
+function renderDebug(trace) {
+  if (!trace) {
+    clearDebugPanel();
+    return;
+  }
+
+  elements.debugBox.textContent = formatTrace(trace);
+  elements.debugPanel.classList.remove("hidden");
+}
+
+function clearDebugPanel() {
+  elements.debugPanel.classList.add("hidden");
+  elements.debugBox.textContent = "";
+}
+
+function formatTrace(trace) {
+  const lines = [`Query: ${trace.query}`];
+  const documentLabel = trace.filename
+    ? `${trace.filename} (${trace.document_id})`
+    : trace.document_id;
+  lines.push(`Document: ${documentLabel}`);
+
+  if (trace.embedding) {
+    const embedding = trace.embedding;
+    lines.push(
+      `Embedding: ${embedding.provider} / ${embedding.model} (${embedding.dimensions} dims)`
+    );
+  }
+
+  if (trace.retrieval) {
+    const retrieval = trace.retrieval;
+    lines.push(
+      `Retriever candidates: ${retrieval.candidate_count} ` +
+        `(query_type: ${retrieval.query_type}, mode: ${retrieval.query_mode})`
+    );
+    const kept = (retrieval.selected_chunks || [])
+      .map((chunk) => chunk.chunk_index)
+      .join(", ");
+    lines.push(`Reranker (${retrieval.reranker}) selected: chunks ${kept || "-"}`);
+    for (const chunk of retrieval.selected_chunks || []) {
+      lines.push(
+        `  - chunk ${chunk.chunk_index}: ` +
+          `score ${formatScore(chunk.score)}, ` +
+          `vector ${formatScore(chunk.vector_score)}, ` +
+          `lexical ${formatScore(chunk.lexical_score)}, ` +
+          `rerank ${formatScore(chunk.rerank_score)}`
+      );
+    }
+  }
+
+  if (trace.prompt) {
+    lines.push(
+      `Prompt: ${trace.prompt.chars} chars (~${trace.prompt.tokens_estimate} tokens)`
+    );
+  }
+
+  if (trace.answer) {
+    lines.push(`Answer model: ${trace.answer.model}`);
+  }
+
+  if (trace.verification) {
+    lines.push(`Verification: ${trace.verification.status}`);
+  }
+
+  for (const stage of trace.stages || []) {
+    lines.push(`Stage ${stage.name}: ${stage.duration_ms} ms`);
+  }
+
+  if (trace.latency_ms) {
+    lines.push(`Latency: ${trace.latency_ms.total} ms`);
+  }
+
+  return lines.join("\n");
+}
+
+function formatScore(value) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+
+  return Number(value).toFixed(4);
 }
 
 function formatAnswerModel(model, verification) {

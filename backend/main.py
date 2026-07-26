@@ -14,6 +14,7 @@ from rag.embeddings import (
 )
 from rag.extractor import extract_file_text
 from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
+from rag.observability import QueryTrace, timed
 from rag.prompt import build_grounded_prompt
 from rag.verification import verify_grounded_answer
 from rag.vector_store import DEFAULT_COLLECTION_NAME, InMemoryVectorStore
@@ -125,6 +126,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Build and print the grounded prompt without calling Gemini.",
     )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Print a debug trace of the query pipeline with per-stage latency.",
+    )
     return parser
 
 
@@ -148,6 +154,7 @@ def main() -> None:
         grounded_answer = None
         grounded_prompt = None
         verification = None
+        trace = None
 
         if (args.answer or args.dry_run_answer) and not args.query:
             raise ValueError("--answer and --dry-run-answer require --query.")
@@ -181,33 +188,78 @@ def main() -> None:
             stored_previews = vector_store.preview_points()
 
             if args.query:
-                query_embedding = embed_texts(
-                    [args.query],
-                    provider=args.embedding_provider,
-                    dimensions=args.embedding_dimensions,
-                    gemini_model=args.gemini_model,
-                )[0]
-                search_results = vector_store.search(
-                    query_vector=query_embedding.values,
-                    limit=args.top_k,
-                    document_id=document_id,
-                    query_text=args.query,
+                if args.trace:
+                    trace = QueryTrace(query=args.query, document_id=document_id)
+                    trace.record_embedding(
+                        provider=args.embedding_provider,
+                        model=args.gemini_model
+                        if args.embedding_provider == "gemini"
+                        else f"local-hash-{args.embedding_dimensions}",
+                        dimensions=args.embedding_dimensions,
+                    )
+
+                query_embedding = timed(
+                    trace,
+                    "embed_query",
+                    lambda: embed_texts(
+                        [args.query],
+                        provider=args.embedding_provider,
+                        dimensions=args.embedding_dimensions,
+                        gemini_model=args.gemini_model,
+                    )[0],
+                )
+                search_results = timed(
+                    trace,
+                    "retrieve",
+                    lambda: vector_store.search(
+                        query_vector=query_embedding.values,
+                        limit=args.top_k,
+                        document_id=document_id,
+                        query_text=args.query,
+                    ),
                 )
 
+                if trace is not None:
+                    trace.record_retrieval(
+                        query_mode="auto",
+                        reranker="none",
+                        top_k=args.top_k,
+                        candidate_count=len(search_results),
+                        results=search_results,
+                    )
+
                 if args.dry_run_answer:
-                    grounded_prompt = build_grounded_prompt(args.query, search_results)
+                    grounded_prompt = timed(
+                        trace,
+                        "build_prompt",
+                        lambda: build_grounded_prompt(args.query, search_results),
+                    )
+                    if trace is not None:
+                        trace.record_prompt(grounded_prompt, model=None)
                 elif args.answer:
-                    grounded_answer = generate_grounded_answer(
-                        question=args.query,
-                        search_results=search_results,
-                        model=args.llm_model,
-                        temperature=args.temperature,
+                    grounded_answer = timed(
+                        trace,
+                        "generate_answer",
+                        lambda: generate_grounded_answer(
+                            question=args.query,
+                            search_results=search_results,
+                            model=args.llm_model,
+                            temperature=args.temperature,
+                        ),
                     )
-                    verification = verify_grounded_answer(
-                        args.query,
-                        grounded_answer.answer,
-                        search_results,
+                    verification = timed(
+                        trace,
+                        "verify_answer",
+                        lambda: verify_grounded_answer(
+                            args.query,
+                            grounded_answer.answer,
+                            search_results,
+                        ),
                     )
+                    if trace is not None:
+                        trace.record_prompt(grounded_answer.prompt, model=grounded_answer.model)
+                        trace.record_answer(grounded_answer.answer, model=grounded_answer.model)
+                        trace.record_verification(verification)
     except (FileNotFoundError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -301,6 +353,10 @@ def main() -> None:
             if verification.missing_citations:
                 print(f"Missing citations: {verification.missing_citations}")
             print(f"Notes: {verification.notes}")
+
+    if trace is not None:
+        print("\n=== Trace ===")
+        print(trace.to_text())
 
     print("\n=== Summary ===")
     print(f"Characters extracted: {len(text)}")

@@ -16,6 +16,7 @@ from rag.chunking import chunk_text
 from rag.embeddings import DEFAULT_GEMINI_MODEL, DEFAULT_LOCAL_DIMENSIONS, embed_texts
 from rag.extractor import extract_file_text
 from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
+from rag.observability import QueryTrace, timed
 from rag.prompt import build_grounded_prompt
 from rag.reranker import rerank_results
 from rag.verification import VerificationResult, verify_grounded_answer
@@ -168,6 +169,7 @@ class DocumentQueryRequest(BaseModel):
     query_mode: str = "auto"
     reranker: str = "local"
     retrieval_k: Optional[int] = Field(default=None, gt=0)
+    debug: bool = False
 
 
 class VerificationPayload(BaseModel):
@@ -190,6 +192,7 @@ class DocumentQueryResponse(BaseModel):
     answer_model: Optional[str] = None
     prompt: Optional[str] = None
     verification: Optional[VerificationPayload] = None
+    trace: Optional[dict] = None
 
 
 @app.get("/")
@@ -429,14 +432,34 @@ def query_uploaded_document(
         )
 
     record = _get_document_record(document_id)
+    trace = (
+        QueryTrace(
+            query=request.query,
+            document_id=record.document_id,
+            filename=record.filename,
+        )
+        if request.debug
+        else None
+    )
+
+    if trace is not None:
+        trace.record_embedding(
+            provider=record.embedding_provider,
+            model=record.embedding_model,
+            dimensions=record.embedding_dimensions,
+        )
 
     try:
-        query_embedding = embed_texts(
-            [request.query],
-            provider=record.embedding_provider,
-            dimensions=record.embedding_dimensions,
-            gemini_model=record.embedding_model,
-        )[0]
+        query_embedding = timed(
+            trace,
+            "embed_query",
+            lambda: embed_texts(
+                [request.query],
+                provider=record.embedding_provider,
+                dimensions=record.embedding_dimensions,
+                gemini_model=record.embedding_model,
+            )[0],
+        )
         search_results = _retrieve_then_rerank(
             store=vector_store,
             query_vector=query_embedding.values,
@@ -448,6 +471,7 @@ def query_uploaded_document(
             query_mode=request.query_mode,
             reranker=request.reranker,
             retrieval_k=request.retrieval_k,
+            trace=trace,
         )
 
         prompt = None
@@ -456,19 +480,37 @@ def query_uploaded_document(
         verification = None
 
         if request.dry_run_answer:
-            prompt = build_grounded_prompt(request.query, search_results)
+            prompt = timed(
+                trace,
+                "build_prompt",
+                lambda: build_grounded_prompt(request.query, search_results),
+            )
+            if trace is not None:
+                trace.record_prompt(prompt, model=None)
         elif request.answer:
-            grounded_answer = generate_grounded_answer(
-                question=request.query,
-                search_results=search_results,
-                model=request.llm_model,
-                temperature=request.temperature,
+            grounded_answer = timed(
+                trace,
+                "generate_answer",
+                lambda: generate_grounded_answer(
+                    question=request.query,
+                    search_results=search_results,
+                    model=request.llm_model,
+                    temperature=request.temperature,
+                ),
             )
             answer = grounded_answer.answer
             answer_model = grounded_answer.model
-            verification = _verification_to_payload(
-                verify_grounded_answer(request.query, answer, search_results)
+            verification_result = timed(
+                trace,
+                "verify_answer",
+                lambda: verify_grounded_answer(request.query, answer, search_results),
             )
+            verification = _verification_to_payload(verification_result)
+
+            if trace is not None:
+                trace.record_prompt(grounded_answer.prompt, model=answer_model)
+                trace.record_answer(answer, model=answer_model)
+                trace.record_verification(verification_result)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -481,6 +523,7 @@ def query_uploaded_document(
         answer_model=answer_model,
         prompt=prompt,
         verification=verification,
+        trace=trace.to_dict() if trace is not None else None,
     )
 
 
@@ -545,26 +588,46 @@ def _retrieve_then_rerank(
     query_mode: str = "auto",
     reranker: str = "local",
     retrieval_k: Optional[int] = None,
+    trace: Optional[QueryTrace] = None,
 ):
     candidate_limit = retrieval_k or (
         max(top_k * 4, top_k) if reranker != "none" else top_k
     )
     candidate_limit = max(candidate_limit, top_k)
-    candidates = store.search(
-        query_vector=query_vector,
-        limit=candidate_limit,
-        document_id=document_id,
-        query_text=query_text,
-        lexical_weight=lexical_weight,
-        vector_weight=vector_weight,
-        query_mode=query_mode,
+    candidates = timed(
+        trace,
+        "retrieve",
+        lambda: store.search(
+            query_vector=query_vector,
+            limit=candidate_limit,
+            document_id=document_id,
+            query_text=query_text,
+            lexical_weight=lexical_weight,
+            vector_weight=vector_weight,
+            query_mode=query_mode,
+        ),
     )
-    return rerank_results(
-        query_text=query_text,
-        results=candidates,
-        limit=top_k,
-        strategy=reranker,
+    results = timed(
+        trace,
+        "rerank",
+        lambda: rerank_results(
+            query_text=query_text,
+            results=candidates,
+            limit=top_k,
+            strategy=reranker,
+        ),
     )
+
+    if trace is not None:
+        trace.record_retrieval(
+            query_mode=query_mode,
+            reranker=reranker,
+            top_k=top_k,
+            candidate_count=len(candidates),
+            results=results,
+        )
+
+    return results
 
 
 def _extract_upload_text(filename: str, content: bytes) -> str:

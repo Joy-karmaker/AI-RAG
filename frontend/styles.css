@@ -557,6 +557,14 @@ select:focus {
   white-space: pre-wrap;
 }
 
+.debug-panel pre {
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  background: #10171b;
+  color: #d7e2e8;
+}
+
 .hidden {
   display: none;
 }

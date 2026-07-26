@@ -805,3 +805,78 @@ Why this matters:
 - Verification separates "sounds right" from "supported by retrieved evidence".
 - Citation checks catch answers that refer to chunks that were not actually used.
 - A conservative verifier is useful because weak support should be visible, not hidden.
+
+## Day 18: Observability and Debugging
+
+Goal: make every answer explainable by tracing the query through each pipeline
+stage with scores, prompt size, model, and latency.
+
+The trace covers the full path:
+
+```text
+embed query -> retrieve -> rerank -> build prompt -> generate answer -> verify
+```
+
+Ask for an answer with a trace through the API:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8000/documents/<document_id>/query `
+  -ContentType "application/json" `
+  -Body '{"query":"Why should chunks overlap?","top_k":3,"answer":true,"reranker":"local","retrieval_k":20,"debug":true}'
+```
+
+Trace a query from the CLI without spending a Gemini call:
+
+```powershell
+python -B backend/main.py sample_docs/day2_long.txt --chunk-size 600 --overlap 120 --query "Why do chunks overlap?" --top-k 2 --dry-run-answer --trace
+```
+
+The response adds a `trace` object when `debug` is `true`:
+
+```json
+{
+  "query": "Why do chunks overlap?",
+  "document_id": "day2_long-fde5ee4a",
+  "filename": "day2_long.txt",
+  "embedding": { "provider": "local", "model": "local-hash-384", "dimensions": 384 },
+  "retrieval": {
+    "query_mode": "auto",
+    "query_type": "semantic_explanation",
+    "reranker": "local",
+    "top_k": 2,
+    "candidate_count": 20,
+    "selected_count": 2,
+    "selected_chunks": [
+      { "chunk_index": 3, "score": 0.95, "vector_score": 1.0, "lexical_score": 1.0, "rerank_score": 0.95, "rerank_strategy": "local" }
+    ]
+  },
+  "prompt": { "chars": 1688, "tokens_estimate": 422, "model": "gemini-2.5-flash" },
+  "answer": { "model": "gemini-2.5-flash", "chars": 220 },
+  "verification": { "status": "supported", "supported": true },
+  "stages": [
+    { "name": "embed_query", "duration_ms": 0.09 },
+    { "name": "retrieve", "duration_ms": 2.46 },
+    { "name": "rerank", "duration_ms": 0.41 }
+  ],
+  "latency_ms": { "total": 2.97 }
+}
+```
+
+What changed:
+
+- Added `rag.observability` with a deterministic, offline `QueryTrace`.
+- API queries accept `"debug": true` and return a `trace` object.
+- The CLI adds a `--trace` flag that prints a per-stage debug view.
+- The browser adds a `Debug` switch and a trace panel.
+- The smoke test checks the trace stages and retrieval candidate count.
+
+Why this matters:
+
+- When an answer is wrong, the trace shows which stage caused it: extraction,
+  chunking, retrieval, reranking, prompt construction, or generation.
+- Per-stage latency shows where time is spent.
+- The token estimate flags prompts that are getting too large.
+- The trace stays offline: it only measures latency and reads values the
+  pipeline already produced, so turning it on does not add API calls.
