@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from rag.chunking import chunk_text
+from rag.document_registry import DocumentRegistry
 from rag.embeddings import DEFAULT_GEMINI_MODEL, DEFAULT_LOCAL_DIMENSIONS, embed_texts
 from rag.extractor import extract_file_text
 from rag.generation import DEFAULT_LLM_MODEL, generate_grounded_answer
@@ -42,10 +43,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-vector_store = InMemoryVectorStore(collection_name=DEFAULT_COLLECTION_NAME)
-documents: dict[str, "DocumentRecord"] = {}
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+DATA_DIR = PROJECT_ROOT / "data"
+VECTOR_STORAGE_DIR = DATA_DIR / "qdrant"
+DOCUMENT_REGISTRY_PATH = DATA_DIR / "documents.json"
+document_registry = DocumentRegistry(DOCUMENT_REGISTRY_PATH)
+vector_store = InMemoryVectorStore(
+    collection_name=DEFAULT_COLLECTION_NAME,
+    storage_path=VECTOR_STORAGE_DIR,
+)
+documents: dict[str, "DocumentRecord"] = {}
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,22 @@ class DocumentRecord:
     embedding_dimensions: int
     embedding_provider: str
     embedding_model: str
+
+
+def _load_persisted_documents() -> dict[str, DocumentRecord]:
+    return {
+        document_id: DocumentRecord(**record)
+        for document_id, record in document_registry.load().items()
+    }
+
+
+def _persist_documents() -> None:
+    document_registry.save(
+        {document_id: asdict(record) for document_id, record in documents.items()}
+    )
+
+
+documents.update(_load_persisted_documents())
 
 
 class ChunkRequest(BaseModel):
@@ -381,6 +405,7 @@ async def upload_document(
         ),
     )
     documents[resolved_document_id] = record
+    _persist_documents()
 
     return _document_record_to_response(record)
 
@@ -411,6 +436,7 @@ def delete_document(document_id: str) -> DocumentDeleteResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     del documents[document_id]
+    _persist_documents()
 
     return DocumentDeleteResponse(
         document_id=document_id,

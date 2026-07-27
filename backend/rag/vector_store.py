@@ -4,6 +4,7 @@ import math
 import uuid
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 from rag.chunking import TextChunk
 from rag.embeddings import EmbeddingResult, tokenize_for_local_search
@@ -48,10 +49,15 @@ class SearchResult:
 
 
 class InMemoryVectorStore:
-    """Small Qdrant wrapper for vector storage and search."""
+    """Small Qdrant wrapper for temporary or local persistent storage."""
 
-    def __init__(self, collection_name: str = DEFAULT_COLLECTION_NAME) -> None:
+    def __init__(
+        self,
+        collection_name: str = DEFAULT_COLLECTION_NAME,
+        storage_path: str | Path | None = None,
+    ) -> None:
         self.collection_name = collection_name
+        self.storage_path = Path(storage_path).resolve() if storage_path else None
 
         try:
             from qdrant_client import QdrantClient
@@ -69,7 +75,11 @@ class InMemoryVectorStore:
                 "python -m pip install -r requirements.txt"
             ) from exc
 
-        self._client = QdrantClient(":memory:")
+        if self.storage_path:
+            self.storage_path.mkdir(parents=True, exist_ok=True)
+            self._client = QdrantClient(path=str(self.storage_path))
+        else:
+            self._client = QdrantClient(":memory:")
         self._distance = Distance
         self._field_condition = FieldCondition
         self._filter = Filter
@@ -92,6 +102,9 @@ class InMemoryVectorStore:
 
         vector_size = embeddings[0].dimensions
         self._ensure_collection(vector_size)
+
+        # Re-indexing a document ID must not retain chunks from an older upload.
+        self.delete_document(document_id)
 
         points = []
         for chunk, embedding in zip(chunks, embeddings):
@@ -236,6 +249,14 @@ class InMemoryVectorStore:
             )
 
         if self._client.collection_exists(self.collection_name):
+            collection = self._client.get_collection(self.collection_name)
+            configured_size = _collection_vector_size(collection)
+            if configured_size is not None and configured_size != vector_size:
+                raise ValueError(
+                    "this vector store already contains "
+                    f"{configured_size}-dimension vectors; "
+                    f"got {vector_size}-dimension vectors."
+                )
             self._vector_size = vector_size
             return
 
@@ -615,3 +636,10 @@ def _payload_to_search_result(
 
 def _point_key(point_id) -> str:
     return str(point_id)
+
+
+def _collection_vector_size(collection) -> int | None:
+    """Read the single-vector collection size across qdrant-client versions."""
+    vectors = collection.config.params.vectors
+    size = getattr(vectors, "size", None)
+    return int(size) if size is not None else None

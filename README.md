@@ -880,3 +880,23 @@ Why this matters:
 - The token estimate flags prompts that are getting too large.
 - The trace stays offline: it only measures latency and reads values the
   pipeline already produced, so turning it on does not add API calls.
+
+## Day 19: Persistent Vector Storage
+
+Goal: keep uploaded documents and their vectors after the FastAPI server restarts.
+
+What changed:
+
+- The application Qdrant store now uses local disk storage in `data/qdrant/` instead of `:memory:`.
+- Document metadata is saved atomically in `data/documents.json` and restored when the API starts.
+- Re-uploading with an existing `document_id` clears that document's old vectors before indexing the replacement, preventing stale chunks.
+- Deleting a document clears both its vector payloads and persisted metadata.
+- The `data/` directory is gitignored because it contains local uploaded-document indexes.
+
+Run the integrated server as before:
+
+```powershell
+python -B -m uvicorn api:app --app-dir backend --host 127.0.0.1 --port 8000
+```
+
+After uploading a document, stop and start the server again. `GET /documents` and document queries will still work. Local embedded Qdrant permits one process at a time to open the storage directory; use a Qdrant server deployment for concurrent workers.
