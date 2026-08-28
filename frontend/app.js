@@ -176,6 +176,7 @@ async function queryDocument({ promptOnly }) {
       dry_run_answer: promptOnly,
       llm_model: elements.modelSelect.value,
       debug,
+      agentic: true,
     };
     const data = await apiFetch(`/documents/${selected.document_id}/query`, {
       method: "POST",
@@ -193,7 +194,7 @@ async function queryDocument({ promptOnly }) {
     } else {
       elements.promptPanel.classList.add("hidden");
       renderAnswer(data.answer || summarizeResults(data.results || []), data.verification);
-      elements.answerModel.textContent = formatAnswerModel(data.answer_model, data.verification);
+      elements.answerModel.textContent = formatAnswerModel(data.answer_model, data.verification, data.routing);
     }
 
     renderDebug(debug ? data.trace : null);
@@ -396,14 +397,15 @@ function formatScore(value) {
   return Number(value).toFixed(4);
 }
 
-function formatAnswerModel(model, verification) {
+function formatAnswerModel(model, verification, routing = null) {
+  const route = routing?.action ? ` | ${routing.action}` : "";
   const label = model || "retrieval";
 
   if (!verification) {
-    return label;
+    return `${label}${route}`;
   }
 
-  return `${label} | ${verification.verification_status}`;
+  return `${label} | ${verification.verification_status}${route}`;
 }
 
 function renderSources(results) {

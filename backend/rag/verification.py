@@ -165,6 +165,12 @@ def _is_insufficient_context_answer(answer: str) -> bool:
 
 
 def _extract_cited_chunks(answer: str) -> list[int]:
+    """Find chunk numbers the answer claims to cite, tolerant of varied formats.
+
+    Accepts: "chunk 3", "chunk #3", "chunks 3 and 5", "[3]", bracketed lists in a
+    "Sources:" line, or bare numbers inside a "Sources:" line. It falls back to
+    scanning the whole answer when no dedicated sources line exists.
+    """
     source_lines = [
         line
         for line in answer.splitlines()
@@ -173,7 +179,10 @@ def _extract_cited_chunks(answer: str) -> list[int]:
     citation_text = "\n".join(source_lines) if source_lines else answer
     cited = set()
 
-    for match in re.finditer(r"\bchunk(?:s)?\s*#?\s*(\d+)\b", citation_text, re.IGNORECASE):
+    for match in re.finditer(r"chunk(?:s)?\s*#?\s*(\d+)", citation_text, re.IGNORECASE):
+        cited.add(int(match.group(1)))
+
+    for match in re.finditer(r"\[(\d+)\]", citation_text):
         cited.add(int(match.group(1)))
 
     if source_lines:

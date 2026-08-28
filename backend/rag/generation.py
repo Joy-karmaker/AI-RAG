@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
-import urllib.error
-import urllib.parse
-import urllib.request
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +10,8 @@ from rag.vector_store import SearchResult
 
 
 DEFAULT_LLM_MODEL = "gemini-2.5-flash"
+MAX_GENERATION_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 0.75
 
 
 @dataclass(frozen=True)
@@ -43,7 +42,7 @@ def generate_grounded_answer(
 
     prompt = build_grounded_prompt(question, search_results)
 
-    answer = _generate_with_gemini_rest(
+    answer = _generate_with_gemini(
         api_key=api_key,
         model=model,
         prompt=prompt,
@@ -62,62 +61,42 @@ def generate_grounded_answer(
     )
 
 
-def _generate_with_gemini_rest(
+def _generate_with_gemini(
     api_key: str,
     model: str,
     prompt: str,
     temperature: float,
 ) -> str:
-    safe_model = urllib.parse.quote(model, safe="")
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{safe_model}:generateContent"
-    )
-    payload = {
-        "systemInstruction": {
-            "parts": [{"text": GROUNDING_SYSTEM_INSTRUCTION}],
-        },
-        "contents": [
-            {
-                "parts": [{"text": prompt}],
-            }
-        ],
-        "generationConfig": {
-            "temperature": temperature,
-        },
-    }
-
-    request = urllib.request.Request(
-        url=url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-        },
-        method="POST",
-    )
-
+    """Call Gemini through the google-genai SDK with simple retry/backoff."""
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
         raise RuntimeError(
-            f"Gemini API request failed with HTTP {exc.code}: "
-            f"{_extract_gemini_error_message(body)}"
+            "Gemini answer generation requires a working google-genai installation. "
+            "Install or repair dependencies with: python -m pip install -r requirements.txt. "
+            f"Import error: {exc}"
         ) from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Gemini API request failed: {exc.reason}") from exc
 
-    try:
-        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(f"Gemini API returned an unexpected response: {data}") from exc
+    client = genai.Client(api_key=api_key)
+    config = types.GenerateContentConfig(
+        system_instruction=GROUNDING_SYSTEM_INSTRUCTION,
+        temperature=temperature,
+    )
 
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_GENERATION_RETRIES + 1):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config,
+            )
+            answer = (response.text or "").strip()
+            return answer
+        except Exception as exc:  # noqa: BLE001 - SDK surfaces varied error types
+            last_error = exc
+            if attempt < MAX_GENERATION_RETRIES:
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
 
-def _extract_gemini_error_message(body: str) -> str:
-    try:
-        data = json.loads(body)
-        return str(data["error"]["message"])
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return body[:500]
+    raise RuntimeError(f"Gemini generation failed after {MAX_GENERATION_RETRIES} attempts: {last_error}")

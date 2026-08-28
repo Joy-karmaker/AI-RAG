@@ -900,3 +900,9 @@ python -B -m uvicorn api:app --app-dir backend --host 127.0.0.1 --port 8000
 ```
 
 After uploading a document, stop and start the server again. `GET /documents` and document queries will still work. Local embedded Qdrant permits one process at a time to open the storage directory; use a Qdrant server deployment for concurrent workers.
+
+## Day 20: Simple Agentic RAG Routing
+
+The document-query endpoint now routes after retrieval and reranking. It chooses `document_search`, `generate_answer`, `build_prompt`, `ask_for_clarification`, or `insufficient_context` from the requested mode, ambiguous follow-up phrases, and retrieved evidence. The `routing` response object explains the decision without an additional model call.
+
+Set `"agentic": false` in an API query request to use the prior direct behavior. The browser enables routing by default.

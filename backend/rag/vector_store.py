@@ -529,10 +529,7 @@ def _lexical_scores(query_text: str, records) -> dict[str, float]:
         if matched_terms:
             score += 0.35 * matched_terms / len(query_terms)
 
-        if _has_section_label_match(query_terms, text):
-            score += 0.65
-
-        score += _metadata_aware_bonus(query_terms, text, section_title)
+        score += _heading_overlap_bonus(query_terms, section_title)
 
         if score > 0:
             scores[_point_key(record.id)] = score
@@ -540,51 +537,22 @@ def _lexical_scores(query_text: str, records) -> dict[str, float]:
     return scores
 
 
-def _has_section_label_match(query_terms: list[str], text: str) -> bool:
-    lowered_text = text.lower()
-    section_terms = {
-        "framework": ("framework", "frameworks"),
-        "library": ("library", "libraries"),
-        "skill": ("skill", "skills"),
-        "tool": ("tool", "tools"),
-        "technology": ("technology", "technologies"),
-    }
+def _heading_overlap_bonus(query_terms: list[str], section_title: str) -> float:
+    """Generic bonus when query terms also appear in the chunk's section heading.
 
-    for query_term, text_terms in section_terms.items():
-        if query_term in query_terms and any(term in lowered_text for term in text_terms):
-            return True
+    This is document-structure aware without being tied to any specific document
+    such as a CV (unlike the earlier CV-only metadata bonuses).
+    """
+    if not section_title or not query_terms:
+        return 0.0
 
-    return False
+    section_tokens = set(tokenize_for_local_search(section_title))
+    overlap = sum(1 for term in query_terms if term in section_tokens)
 
+    if overlap == 0:
+        return 0.0
 
-def _metadata_aware_bonus(
-    query_terms: list[str],
-    text: str,
-    section_title: str,
-) -> float:
-    lowered_text = text.lower()
-    lowered_section = section_title.lower()
-    bonus = 0.0
-
-    if "professional experience" in lowered_section and any(
-        term in query_terms
-        for term in ("work", "company", "role", "job")
-    ):
-        bonus += 0.45
-
-    if "present" in lowered_text and any(
-        term in query_terms
-        for term in ("current", "currently", "work", "company", "role")
-    ):
-        bonus += 0.75
-
-    if "technical skills" in lowered_section and any(
-        term in query_terms
-        for term in ("database", "framework", "library", "tool", "skill")
-    ):
-        bonus += 0.35
-
-    return bonus
+    return 0.4 * (overlap / len(query_terms))
 
 
 def _normalize_score_map(scores: dict[str, float]) -> dict[str, float]:

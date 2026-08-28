@@ -12,6 +12,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from rag.agentic_router import AgenticDecision, route_query
 from rag.chunking import chunk_text
 from rag.document_registry import DocumentRegistry
 from rag.embeddings import DEFAULT_GEMINI_MODEL, DEFAULT_LOCAL_DIMENSIONS, embed_texts
@@ -194,8 +195,13 @@ class DocumentQueryRequest(BaseModel):
     reranker: str = "local"
     retrieval_k: Optional[int] = Field(default=None, gt=0)
     debug: bool = False
+    agentic: bool = True
 
 
+class RoutingPayload(BaseModel):
+    action: str
+    reason: str
+    evidence_score: Optional[float] = None
 class VerificationPayload(BaseModel):
     verification_status: str
     supported: bool
@@ -216,6 +222,7 @@ class DocumentQueryResponse(BaseModel):
     answer_model: Optional[str] = None
     prompt: Optional[str] = None
     verification: Optional[VerificationPayload] = None
+    routing: RoutingPayload
     trace: Optional[dict] = None
 
 
@@ -504,8 +511,21 @@ def query_uploaded_document(
         answer = None
         answer_model = None
         verification = None
+        decision: AgenticDecision = route_query(
+            query=request.query,
+            results=search_results,
+            wants_answer=request.answer,
+            wants_prompt=request.dry_run_answer,
+            enabled=request.agentic,
+        )
 
-        if request.dry_run_answer:
+        if decision.action == "ask_for_clarification":
+            answer = "Please ask a more specific question about the selected document."
+            answer_model = "agentic-router"
+        elif decision.action == "insufficient_context":
+            answer = "I could not find enough supporting evidence in the selected document to answer that reliably."
+            answer_model = "agentic-router"
+        elif decision.action == "build_prompt":
             prompt = timed(
                 trace,
                 "build_prompt",
@@ -513,7 +533,7 @@ def query_uploaded_document(
             )
             if trace is not None:
                 trace.record_prompt(prompt, model=None)
-        elif request.answer:
+        elif decision.action == "generate_answer":
             grounded_answer = timed(
                 trace,
                 "generate_answer",
@@ -549,6 +569,11 @@ def query_uploaded_document(
         answer_model=answer_model,
         prompt=prompt,
         verification=verification,
+        routing=RoutingPayload(
+            action=decision.action,
+            reason=decision.reason,
+            evidence_score=decision.evidence_score,
+        ),
         trace=trace.to_dict() if trace is not None else None,
     )
 
